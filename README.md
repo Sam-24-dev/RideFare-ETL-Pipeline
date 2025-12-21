@@ -47,4 +47,4 @@ jupyter notebook RideFare_Analysis_Engineering.ipynb
 ```
 
 ---
-*Desarrollado por Samir Caizapasto - Estudiante de Ingeniería en Computación ESPOL
+Desarrollado por Samir Caizapasto - Estudiante de Ingeniería en Computación ESPOL
