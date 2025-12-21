@@ -1,0 +1,7 @@
+# Ignorar archivos grandes y temporales
+*.db
+*.csv
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.DS_Store
