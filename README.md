@@ -1,9 +1,9 @@
-# 🚖 RideFare: Pipeline ETL & Predicción de Precios con ML
+#  RideFare: Pipeline ETL & Predicción de Precios con ML
 
 Proyecto *End-to-End* de Ingeniería de Datos y Analytics 
 simulando un entorno real de aplicaciones de transporte (tipo Uber/Lyft).
 
-## 🏗️ Arquitectura del Proyecto
+##  Arquitectura del Proyecto
 Este proyecto transforma datos crudos en insights de negocio mediante una arquitectura de 3 etapas:
 
 1.  **Pipeline ETL :** Script de Python (`etl_db.py`) que extrae datos crudos (CSV con ~1.2 Millones de filas), limpia formatos inconsistentes y carga la data optimizada en una **Base de Datos SQLite**.
@@ -25,12 +25,12 @@ Este proyecto transforma datos crudos en insights de negocio mediante una arquit
 
 ![Gráfico de Feature Importance](imagenes/feature_importance.png)
 
-## 🛠️ Stack Tecnológico
+##  Stack Tecnológico
 * **Lenguajes:** Python, SQL.
 * **Librerías:** Pandas, Scikit-Learn, SQLite3, Matplotlib/Seaborn, Plotly.
 * **Herramientas:** Jupyter Notebook, VS Code.
 
-## 🚀 Cómo Ejecutar
+##  Cómo Ejecutar
 
 ```bash
 # 1. Clonar el repositorio
