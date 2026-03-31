@@ -2,14 +2,7 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Iterable
-
-warnings.filterwarnings(
-    "ignore",
-    message="Pandas and numpy have been removed from the base pandera",
-    category=UserWarning,
-)
 
 import pandera.errors
 import pandera.polars as pa

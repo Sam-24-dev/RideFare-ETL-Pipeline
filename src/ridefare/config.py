@@ -62,7 +62,7 @@ class RideFarePaths:
             processed_dir=data_dir / "processed",
             duckdb_path=data_dir / "processed" / "ridefare.duckdb",
             dbt_project_dir=root / "dbt",
-            dbt_profiles_dir=root / "dbt",
+            dbt_profiles_dir=data_dir / "processed" / "dbt_profiles",
             samples_dir=data_dir / "samples",
         )
 

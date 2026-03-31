@@ -8,7 +8,7 @@ import polars as pl
 def test_default_paths_match_phase_two_contract() -> None:
     from ridefare.config import RideFarePaths
 
-    project_root = Path("C:/tmp/ridefare")
+    project_root = (Path("tmp") / "ridefare").resolve()
 
     paths = RideFarePaths.defaults(project_root=project_root)
 
@@ -16,6 +16,7 @@ def test_default_paths_match_phase_two_contract() -> None:
     assert paths.weather_raw_path == project_root / "data" / "raw" / "PFDA_weather.csv"
     assert paths.interim_dir == project_root / "data" / "interim"
     assert paths.duckdb_path == project_root / "data" / "processed" / "ridefare.duckdb"
+    assert paths.dbt_profiles_dir == project_root / "data" / "processed" / "dbt_profiles"
 
 
 def test_normalize_column_names_trims_and_snake_cases_headers() -> None:

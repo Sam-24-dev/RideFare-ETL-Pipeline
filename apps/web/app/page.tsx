@@ -4,7 +4,7 @@ export default function Home() {
       <section className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center gap-10 px-6 py-24 sm:px-10 lg:px-16">
         <div className="flex flex-col gap-4">
           <p className="text-sm font-medium uppercase tracking-[0.24em] text-zinc-400">
-            Data Platform
+            Plataforma de Datos
           </p>
           <h1 className="max-w-4xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
             RideFare se esta reconstruyendo como un producto de datos para pricing
@@ -43,7 +43,7 @@ export default function Home() {
 
         <div className="flex flex-col gap-3 text-sm text-zinc-400 sm:flex-row sm:items-center">
           <span className="rounded-full border border-white/10 px-4 py-2">
-            Proximo hito: ML System
+            Proximo hito: Sistema ML
           </span>
           <span className="rounded-full border border-white/10 px-4 py-2">
             UI publica en espanol
