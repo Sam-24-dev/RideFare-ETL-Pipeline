@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "RideFare",
-  description: "Plataforma de analítica, machine learning y pricing intelligence.",
+  description: "Plataforma de analitica, machine learning y pricing intelligence.",
 };
 
 export default function RootLayout({

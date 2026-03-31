@@ -31,10 +31,9 @@ The legacy assets have been preserved as references while the new platform is be
 
 ## Working Agreement
 
-- `AGENTS.md` is the operational guide for every implementation iteration
-- `ROADMAP.md` is the phase guide for the full project
 - The notebook is not the source of truth
 - Production logic must live in Python, SQL/dbt, and TypeScript
+- Public UI stays in Spanish while technical documentation stays in English
 
 ## Local Development
 
