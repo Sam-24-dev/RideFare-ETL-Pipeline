@@ -164,12 +164,12 @@ class RideFarePaths:
             artifacts_dir,
             self.ml_artifacts_dir,
         )
-        selected_run_id = run_id or "latest"
-        selected_run_dir = (
-            resolved_artifacts_dir / "latest"
-            if run_id is None
-            else resolved_artifacts_dir / "runs" / selected_run_id
-        )
+        if run_id in (None, "latest"):
+            selected_run_id = "latest"
+            selected_run_dir = resolved_artifacts_dir / "latest"
+        else:
+            selected_run_id = run_id
+            selected_run_dir = resolved_artifacts_dir / "runs" / selected_run_id
         return ExportWebConfig(
             project_root=self.project_root,
             artifacts_dir=resolved_artifacts_dir,

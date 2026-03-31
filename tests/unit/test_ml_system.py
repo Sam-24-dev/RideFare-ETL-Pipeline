@@ -22,6 +22,18 @@ def test_default_paths_include_ml_artifact_locations() -> None:
     assert export_config.selected_run_dir == train_config.run_dir
 
 
+def test_export_web_config_treats_latest_as_the_latest_directory() -> None:
+    from ridefare.config import RideFarePaths
+
+    project_root = (Path("tmp") / "ridefare").resolve()
+
+    paths = RideFarePaths.defaults(project_root=project_root)
+    export_config = paths.export_web_config(run_id="latest")
+
+    assert export_config.run_id == "latest"
+    assert export_config.selected_run_dir == project_root / "data" / "processed" / "ml" / "latest"
+
+
 def test_build_split_plan_uses_fallback_for_small_sample() -> None:
     from ridefare.ml_training import build_split_plan
 

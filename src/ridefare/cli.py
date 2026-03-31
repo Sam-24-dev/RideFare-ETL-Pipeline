@@ -7,10 +7,8 @@ import sys
 from collections.abc import Sequence
 
 from ridefare.config import RideFarePaths
-from ridefare.exceptions import RideFareError
-from ridefare.export_web import run_export_web
+from ridefare.exceptions import ExportArtifactsError, RideFareError, TrainingPipelineError
 from ridefare.ingestion import run_ingest
-from ridefare.ml_training import run_train
 from ridefare.transform import run_transform
 
 
@@ -38,6 +36,14 @@ def handle_transform(args: argparse.Namespace) -> int:
 
 
 def handle_train(args: argparse.Namespace) -> int:
+    try:
+        from ridefare.ml_training import run_train
+    except ModuleNotFoundError as exc:
+        raise TrainingPipelineError(
+            "The train command requires the ML dependencies. Reinstall the project with the "
+            "'ml' extra, for example: pip install -e .[data,ml,dev]."
+        ) from exc
+
     paths = RideFarePaths.defaults()
     config = paths.train_config(
         duckdb_path=args.duckdb_path,
@@ -50,6 +56,14 @@ def handle_train(args: argparse.Namespace) -> int:
 
 
 def handle_export_web(args: argparse.Namespace) -> int:
+    try:
+        from ridefare.export_web import run_export_web
+    except ModuleNotFoundError as exc:
+        raise ExportArtifactsError(
+            "The export-web command requires the ML dependencies. Reinstall the project with "
+            "the 'ml' extra, for example: pip install -e .[data,ml,dev]."
+        ) from exc
+
     paths = RideFarePaths.defaults()
     config = paths.export_web_config(
         artifacts_dir=args.artifacts_dir,

@@ -1,4 +1,6 @@
 import argparse
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -92,3 +94,22 @@ def test_export_web_reports_missing_latest_run_artifacts(
 
     assert exit_code == 1
     assert "latest" in captured.err
+
+
+def test_cli_import_does_not_eagerly_load_ml_dependencies() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import ridefare.cli; "
+                "print('xgboost' in sys.modules); print('shap' in sys.modules)"
+            ),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.splitlines()[-2:] == ["False", "False"]
