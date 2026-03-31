@@ -1,0 +1,5 @@
+distance,cab_type,time_stamp,destination,source,price,surge_multiplier,name
+2.1,Uber,1711886400000,Back Bay,North End,12.5,1.0,UberX
+5.8,Lyft,1711888200000,Financial District,Beacon Hill,24.2,1.25,Lyft XL
+3.4,Uber,1711891800000,South Station,North End,18.0,1.5,Uber Comfort
+1.9,Lyft,1711893600000,North End,Beacon Hill,10.8,1.0,Lyft

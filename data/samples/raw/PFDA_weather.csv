@@ -1,0 +1,5 @@
+temp,clouds,pressure,rain,humidity,wind,location,time_stamp
+45.0,25.0,1012.0,0.0,55.0,9.1,North End,1711886400
+47.0,40.0,1011.0,0.2,60.0,8.3,Beacon Hill,1711886400
+50.0,65.0,1009.0,0.0,58.0,10.4,North End,1711890000
+51.0,70.0,1008.0,0.1,62.0,11.2,Beacon Hill,1711893600

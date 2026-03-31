@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: main
+    tables:
+      - name: rides
+        identifier: raw_rides
+      - name: weather
+        identifier: raw_weather
+
+models:
+  - name: stg_rides
+    columns:
+      - name: ride_id
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+      - name: destination
+        tests:
+          - not_null
+      - name: ride_hour
+        tests:
+          - not_null
+      - name: cab_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["Uber", "Lyft"]
+
+  - name: stg_weather
+    columns:
+      - name: weather_id
+        tests:
+          - not_null
+      - name: location
+        tests:
+          - not_null
+      - name: weather_hour
+        tests:
+          - not_null

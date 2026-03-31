@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: fct_rides_enriched
+    columns:
+      - name: ride_id
+        tests:
+          - not_null
+      - name: ride_hour
+        tests:
+          - not_null
+      - name: price
+        tests:
+          - not_null
+
+  - name: mart_model_features
+    columns:
+      - name: ride_id
+        tests:
+          - not_null
+      - name: price
+        tests:
+          - not_null
+      - name: distance
+        tests:
+          - not_null
+      - name: ride_hour
+        tests:
+          - not_null

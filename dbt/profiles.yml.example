@@ -1,0 +1,7 @@
+ridefare:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ./data/processed/ridefare.duckdb
+      threads: 4
