@@ -30,12 +30,13 @@ The public-facing application will consume static exports and present the projec
 
 ## Current Scope
 
-The current phase implements the first operational data platform slice:
+The current repository now includes:
 
 - raw rides and weather CSV ingestion
 - `Pandera` contracts for input validation
 - clean `Parquet` outputs in `data/interim`
 - a local `DuckDB` warehouse file in `data/processed`
 - `dbt` marts for dashboard-ready and model-ready consumption
+- a repeatable ML workflow with temporal evaluation, SHAP explainability, and web exports
 
-The ML workflow and the public web product remain future phases.
+The public web product remains the next major phase.

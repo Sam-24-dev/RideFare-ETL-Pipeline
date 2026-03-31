@@ -1,4 +1,4 @@
-"""Foundation CLI entrypoints for the RideFare project."""
+"""CLI entrypoints for the RideFare project."""
 
 from __future__ import annotations
 
@@ -7,14 +7,9 @@ import sys
 from collections.abc import Sequence
 
 from ridefare.config import RideFarePaths
-from ridefare.exceptions import RideFareError
+from ridefare.exceptions import ExportArtifactsError, RideFareError, TrainingPipelineError
 from ridefare.ingestion import run_ingest
 from ridefare.transform import run_transform
-
-
-def _run_placeholder(command_name: str) -> int:
-    print(f"{command_name} is registered but not implemented yet.")
-    return 0
 
 
 def handle_ingest(args: argparse.Namespace) -> int:
@@ -40,6 +35,46 @@ def handle_transform(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_train(args: argparse.Namespace) -> int:
+    try:
+        from ridefare.ml_training import run_train
+    except ModuleNotFoundError as exc:
+        raise TrainingPipelineError(
+            "The train command requires the ML dependencies. Reinstall the project with the "
+            "'ml' extra, for example: pip install -e .[data,ml,dev]."
+        ) from exc
+
+    paths = RideFarePaths.defaults()
+    config = paths.train_config(
+        duckdb_path=args.duckdb_path,
+        artifacts_dir=args.artifacts_dir,
+        run_id=args.run_id,
+    )
+    result = run_train(config)
+    print(f"Train completed. ML artifacts written to {result.run_dir}.")
+    return 0
+
+
+def handle_export_web(args: argparse.Namespace) -> int:
+    try:
+        from ridefare.export_web import run_export_web
+    except ModuleNotFoundError as exc:
+        raise ExportArtifactsError(
+            "The export-web command requires the ML dependencies. Reinstall the project with "
+            "the 'ml' extra, for example: pip install -e .[data,ml,dev]."
+        ) from exc
+
+    paths = RideFarePaths.defaults()
+    config = paths.export_web_config(
+        artifacts_dir=args.artifacts_dir,
+        web_output_dir=args.web_output_dir,
+        run_id=args.run_id,
+    )
+    result = run_export_web(config)
+    print(f"Web export completed. Artifacts written to {result.web_output_dir}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ridefare",
@@ -58,9 +93,17 @@ def build_parser() -> argparse.ArgumentParser:
     transform_parser.add_argument("--profiles-dir")
     transform_parser.set_defaults(handler=handle_transform)
 
-    for command_name in ("train", "export-web"):
-        command_parser = subparsers.add_parser(command_name)
-        command_parser.set_defaults(handler=lambda _, name=command_name: _run_placeholder(name))
+    train_parser = subparsers.add_parser("train")
+    train_parser.add_argument("--duckdb-path")
+    train_parser.add_argument("--artifacts-dir")
+    train_parser.add_argument("--run-id")
+    train_parser.set_defaults(handler=handle_train)
+
+    export_parser = subparsers.add_parser("export-web")
+    export_parser.add_argument("--artifacts-dir")
+    export_parser.add_argument("--web-output-dir")
+    export_parser.add_argument("--run-id")
+    export_parser.set_defaults(handler=handle_export_web)
 
     return parser
 

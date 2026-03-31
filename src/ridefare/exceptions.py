@@ -21,3 +21,15 @@ class SchemaValidationError(RideFareError):
 
 class DbtBuildError(RideFareError):
     """Raised when dbt build fails."""
+
+
+class ModelingDataError(RideFareError):
+    """Raised when the modeled dataset cannot support the ML workflow."""
+
+
+class TrainingPipelineError(RideFareError):
+    """Raised when the ML training workflow fails."""
+
+
+class ExportArtifactsError(RideFareError):
+    """Raised when web export artifacts cannot be produced."""
