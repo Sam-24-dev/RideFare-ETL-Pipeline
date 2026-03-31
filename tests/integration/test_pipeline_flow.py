@@ -99,3 +99,41 @@ def test_transform_builds_duckdb_and_marts(sample_workspace: Path) -> None:
         "ride_day_of_week",
     } <= mart_columns
     assert mart_rows == 4
+
+
+def test_train_and_export_web_produce_ml_artifacts(sample_workspace: Path) -> None:
+    from ridefare.cli import main
+
+    assert main(["ingest"]) == 0
+    assert main(["transform"]) == 0
+    assert main(["train", "--run-id", "sample-ml-run"]) == 0
+    assert main(["export-web", "--run-id", "sample-ml-run"]) == 0
+
+    ml_root = sample_workspace / "data" / "processed" / "ml"
+    run_dir = ml_root / "runs" / "sample-ml-run"
+    latest_dir = ml_root / "latest"
+    web_dir = ml_root / "web"
+
+    assert (run_dir / "dataset_snapshot.parquet").exists()
+    assert (run_dir / "metrics.json").exists()
+    assert (run_dir / "comparison.json").exists()
+    assert (run_dir / "predictions.parquet").exists()
+    assert (run_dir / "feature_importance.json").exists()
+    assert (run_dir / "shap_summary.json").exists()
+    assert (run_dir / "models").exists()
+    assert (run_dir / "plots").exists()
+    assert latest_dir.exists()
+    assert web_dir.exists()
+
+    comparison = json.loads((run_dir / "comparison.json").read_text(encoding="utf-8"))
+    metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    web_overview = json.loads((web_dir / "model_overview.json").read_text(encoding="utf-8"))
+
+    assert comparison["champion_model"] in {
+        "dummy_mean",
+        "linear_regression",
+        "random_forest",
+        "xgboost",
+    }
+    assert metrics["models"]
+    assert web_overview["champion_model"] == comparison["champion_model"]

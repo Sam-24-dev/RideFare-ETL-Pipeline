@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -37,6 +38,33 @@ class TransformConfig:
 
 
 @dataclass(frozen=True)
+class TrainConfig:
+    """Resolved configuration for the train command."""
+
+    project_root: Path
+    duckdb_path: Path
+    artifacts_dir: Path
+    run_id: str
+    run_dir: Path
+    latest_dir: Path
+
+
+@dataclass(frozen=True)
+class ExportWebConfig:
+    """Resolved configuration for the export-web command."""
+
+    project_root: Path
+    artifacts_dir: Path
+    run_id: str
+    selected_run_dir: Path
+    web_output_dir: Path
+
+
+def _default_run_id() -> str:
+    return datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+@dataclass(frozen=True)
 class RideFarePaths:
     """Canonical project locations for RideFare."""
 
@@ -48,6 +76,7 @@ class RideFarePaths:
     duckdb_path: Path
     dbt_project_dir: Path
     dbt_profiles_dir: Path
+    ml_artifacts_dir: Path
     samples_dir: Path
 
     @classmethod
@@ -63,6 +92,7 @@ class RideFarePaths:
             duckdb_path=data_dir / "processed" / "ridefare.duckdb",
             dbt_project_dir=root / "dbt",
             dbt_profiles_dir=data_dir / "processed" / "dbt_profiles",
+            ml_artifacts_dir=data_dir / "processed" / "ml",
             samples_dir=data_dir / "samples",
         )
 
@@ -99,5 +129,55 @@ class RideFarePaths:
                 self.project_root,
                 profiles_dir,
                 self.dbt_profiles_dir,
+            ),
+        )
+
+    def train_config(
+        self,
+        duckdb_path: str | Path | None = None,
+        artifacts_dir: str | Path | None = None,
+        run_id: str | None = None,
+    ) -> TrainConfig:
+        resolved_artifacts_dir = _resolve_candidate(
+            self.project_root,
+            artifacts_dir,
+            self.ml_artifacts_dir,
+        )
+        selected_run_id = run_id or _default_run_id()
+        return TrainConfig(
+            project_root=self.project_root,
+            duckdb_path=_resolve_candidate(self.project_root, duckdb_path, self.duckdb_path),
+            artifacts_dir=resolved_artifacts_dir,
+            run_id=selected_run_id,
+            run_dir=resolved_artifacts_dir / "runs" / selected_run_id,
+            latest_dir=resolved_artifacts_dir / "latest",
+        )
+
+    def export_web_config(
+        self,
+        artifacts_dir: str | Path | None = None,
+        web_output_dir: str | Path | None = None,
+        run_id: str | None = None,
+    ) -> ExportWebConfig:
+        resolved_artifacts_dir = _resolve_candidate(
+            self.project_root,
+            artifacts_dir,
+            self.ml_artifacts_dir,
+        )
+        selected_run_id = run_id or "latest"
+        selected_run_dir = (
+            resolved_artifacts_dir / "latest"
+            if run_id is None
+            else resolved_artifacts_dir / "runs" / selected_run_id
+        )
+        return ExportWebConfig(
+            project_root=self.project_root,
+            artifacts_dir=resolved_artifacts_dir,
+            run_id=selected_run_id,
+            selected_run_dir=selected_run_dir,
+            web_output_dir=_resolve_candidate(
+                self.project_root,
+                web_output_dir,
+                resolved_artifacts_dir / "web",
             ),
         )

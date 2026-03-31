@@ -23,22 +23,6 @@ def test_build_parser_registers_foundation_commands() -> None:
     assert {"ingest", "transform", "train", "export-web"} <= set(subparsers.choices)
 
 
-@pytest.mark.parametrize("command_name", ["train", "export-web"])
-def test_remaining_placeholder_commands_exit_cleanly(
-    command_name: str,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from ridefare.cli import main
-
-    exit_code = main([command_name])
-
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert command_name in captured.out
-    assert "not implemented yet" in captured.out
-
-
 def test_ingest_reports_missing_default_raw_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -74,3 +58,37 @@ def test_transform_reports_missing_interim_parquet(
     assert exit_code == 1
     assert "rides.parquet" in captured.err
     assert "weather.parquet" in captured.err
+
+
+def test_train_reports_missing_default_duckdb_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ridefare.cli import main
+
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["train"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "ridefare.duckdb" in captured.err
+
+
+def test_export_web_reports_missing_latest_run_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ridefare.cli import main
+
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["export-web"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "latest" in captured.err

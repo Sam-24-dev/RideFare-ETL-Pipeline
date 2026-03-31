@@ -1,8 +1,10 @@
 # RideFare
 
-RideFare is being rebuilt as a portfolio-grade data product that combines analytics engineering, machine learning, and product-focused frontend delivery.
+RideFare is being rebuilt as a portfolio-grade data product that combines analytics
+engineering, machine learning, and product-focused frontend delivery.
 
-The repository has completed the `Foundation` phase and is currently in `Data Platform`.
+The repository has completed the `Foundation`, `Data Platform`, and `ML System` phases.
+The next major milestone is the public `Web Product`.
 
 ## Project Direction
 
@@ -28,6 +30,14 @@ The legacy assets have been preserved as references while the new platform is be
 - `dbt` models for `staging`, `intermediate`, and `marts`
 - Versioned sample raw inputs under `data/samples/raw`
 - Data contracts and quality rules documented in `docs/data/`
+
+## ML System Deliverables
+
+- `ridefare train` command that reads `mart_model_features` and writes versioned ML runs
+- baseline models with deterministic comparison against the primary `XGBoost` model
+- temporal evaluation outputs, holdout predictions, feature importance, and SHAP artifacts
+- `ridefare export-web` command that writes frontend-ready JSON files under `data/processed/ml/web`
+- model documentation in `docs/ml/`
 
 ## Working Agreement
 
