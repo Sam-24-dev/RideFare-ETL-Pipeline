@@ -1,50 +1,40 @@
-#  RideFare: Pipeline ETL & Predicción de Precios con ML
+# RideFare
 
-Proyecto *End-to-End* de Ingeniería de Datos y Analytics 
-simulando un entorno real de aplicaciones de transporte (tipo Uber/Lyft).
+RideFare is being rebuilt as a portfolio-grade data product that combines analytics engineering, machine learning, and product-focused frontend delivery.
 
-##  Arquitectura del Proyecto
-Este proyecto transforma datos crudos en insights de negocio mediante una arquitectura de 3 etapas:
+The repository has completed the `Foundation` phase and is currently in `Data Platform`.
 
-1.  **Pipeline ETL :** Script de Python (`etl_db.py`) que extrae datos crudos (CSV con ~1.2 Millones de filas), limpia formatos inconsistentes y carga la data optimizada en una **Base de Datos SQLite**.
-2.  **Integración SQL:** Extracción de datos para análisis mediante consultas SQL complejas (JOINs) entre tablas de `Viajes` y `Clima`.
-3.  **Machine Learning:** Implementación de un modelo *Random Forest Regressor* para predecir la dinámica de precios.
+## Project Direction
 
-##  Resultados y Desafíos de Ingeniería
+- Public UI: Spanish
+- Technical documentation: English
+- Data stack: `Polars`, `DuckDB`, `dbt`, `Pandera`
+- ML stack: `scikit-learn`, `XGBoost`, `SHAP`
+- Frontend stack: `Next.js`, `TypeScript`, `Tailwind CSS`, `shadcn/ui`, `Framer Motion`, `Apache ECharts`
+- Deployment target: `Vercel`
 
-### 1. Volumen y Limpieza de Datos
-* **Procesamiento:** Se ingirieron 1.2M+ registros.
-* **Calidad:** Tras el proceso de limpieza y cruce SQL, se consolidó un dataset final de ~600k viajes verificados.
+## Current Status
 
-### 2. Rendimiento del Modelo (Baseline)
-* **RMSE:** $9.00 (Margen de error promedio).
-* **R² Score:** 0.15 (Baseline).
-* **Análisis Técnico:** La correlación baja indica que la `Distancia` y el `Surge Multiplier` son los factores dominantes. La data del `Clima` (unida por hora) añade complejidad/ruido, lo que sugiere la necesidad de datos climáticos más granulares (por minuto) para futuras iteraciones.
+The legacy assets have been preserved as references while the new platform is being built:
 
-### 3. Visualización de Insights
+- Legacy notebook: [notebooks/ridefare_analysis_engineering_legacy.ipynb](./notebooks/ridefare_analysis_engineering_legacy.ipynb)
+- Legacy ETL script: [scripts/legacy/etl_db_legacy.py](./scripts/legacy/etl_db_legacy.py)
+- Legacy audit: [docs/architecture/legacy-audit.md](./docs/architecture/legacy-audit.md)
 
-![Gráfico de Feature Importance](imagenes/feature_importance.png)
+## Data Platform Deliverables
 
-##  Stack Tecnológico
-* **Lenguajes:** Python, SQL.
-* **Librerías:** Pandas, Scikit-Learn, SQLite3, Matplotlib/Seaborn, Plotly.
-* **Herramientas:** Jupyter Notebook, VS Code.
+- `ridefare ingest` command that validates raw CSV inputs and writes clean `Parquet` outputs
+- `ridefare transform` command that loads prepared raw tables into `DuckDB` and runs `dbt build`
+- `dbt` models for `staging`, `intermediate`, and `marts`
+- Versioned sample raw inputs under `data/samples/raw`
+- Data contracts and quality rules documented in `docs/data/`
 
-##  Cómo Ejecutar
+## Working Agreement
 
-```bash
-# 1. Clonar el repositorio
-git clone https://github.com/TU_USUARIO/RideFare-ETL-Pipeline.git
+- The notebook is not the source of truth
+- Production logic must live in Python, SQL/dbt, and TypeScript
+- Public UI stays in Spanish while technical documentation stays in English
 
-# 2. Instalar dependencias
-pip install pandas scikit-learn matplotlib seaborn plotly jupyter
+## Local Development
 
-# 3. Ejecutar el ETL (crea la base de datos)
-python etl_db.py
-
-# 4. Abrir el notebook de análisis
-jupyter notebook RideFare_Analysis_Engineering.ipynb
-```
-
----
-Desarrollado por Samir Caizapasto - Estudiante de Ingeniería en Computación ESPOL
+Detailed local setup lives in [docs/runbooks/local-development.md](./docs/runbooks/local-development.md).

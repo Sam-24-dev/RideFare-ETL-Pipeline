@@ -1,0 +1,20 @@
+name: "ridefare"
+version: "0.1.0"
+config-version: 2
+
+profile: "ridefare"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+test-paths: ["tests"]
+
+models:
+  ridefare:
+    staging:
+      +materialized: table
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
