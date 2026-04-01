@@ -110,6 +110,7 @@ def test_train_and_export_web_produce_ml_artifacts(sample_workspace: Path) -> No
     assert main(["export-web", "--run-id", "sample-ml-run"]) == 0
 
     ml_root = sample_workspace / "data" / "processed" / "ml"
+    analytics_web_dir = sample_workspace / "data" / "processed" / "analytics" / "web"
     run_dir = ml_root / "runs" / "sample-ml-run"
     latest_dir = ml_root / "latest"
     web_dir = ml_root / "web"
@@ -124,10 +125,16 @@ def test_train_and_export_web_produce_ml_artifacts(sample_workspace: Path) -> No
     assert (run_dir / "plots").exists()
     assert latest_dir.exists()
     assert web_dir.exists()
+    assert analytics_web_dir.exists()
 
     comparison = json.loads((run_dir / "comparison.json").read_text(encoding="utf-8"))
     metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
     web_overview = json.loads((web_dir / "model_overview.json").read_text(encoding="utf-8"))
+    scenario_controls = json.loads((web_dir / "scenario_controls.json").read_text(encoding="utf-8"))
+    scenario_grid = json.loads((web_dir / "scenario_grid.json").read_text(encoding="utf-8"))
+    dashboard_overview = json.loads(
+        (analytics_web_dir / "dashboard_overview.json").read_text(encoding="utf-8")
+    )
 
     assert comparison["champion_model"] in {
         "dummy_mean",
@@ -137,3 +144,7 @@ def test_train_and_export_web_produce_ml_artifacts(sample_workspace: Path) -> No
     }
     assert metrics["models"]
     assert web_overview["champion_model"] == comparison["champion_model"]
+    assert scenario_controls["sources"]
+    assert scenario_controls["weather_profiles"]
+    assert scenario_grid
+    assert dashboard_overview["kpis"]

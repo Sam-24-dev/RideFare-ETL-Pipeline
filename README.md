@@ -3,8 +3,8 @@
 RideFare is being rebuilt as a portfolio-grade data product that combines analytics
 engineering, machine learning, and product-focused frontend delivery.
 
-The repository has completed the `Foundation`, `Data Platform`, and `ML System` phases.
-The next major milestone is the public `Web Product`.
+The repository has completed the `Foundation`, `Data Platform`, `ML System`, and
+`Web Product` phases.
 
 ## Project Direction
 
@@ -36,8 +36,18 @@ The legacy assets have been preserved as references while the new platform is be
 - `ridefare train` command that reads `mart_model_features` and writes versioned ML runs
 - baseline models with deterministic comparison against the primary `XGBoost` model
 - temporal evaluation outputs, holdout predictions, feature importance, and SHAP artifacts
-- `ridefare export-web` command that writes frontend-ready JSON files under `data/processed/ml/web`
+- `ridefare export-web` command that writes frontend-ready JSON files under
+  `data/processed/ml/web` and `data/processed/analytics/web`
 - model documentation in `docs/ml/`
+
+## Web Product Deliverables
+
+- Spanish public routes for `/`, `/dashboard`, `/como-funciona`, and `/escenarios`
+- typed frontend data loaders backed by exported JSON artifacts and runtime `zod` validation
+- editorial analytics dashboard with ECharts visualizations and client-side filters
+- public methodology page that translates pipeline and ML decisions into portfolio-ready copy
+- model lab with benchmark comparison, SHAP views, and a static scenario simulator
+- visual system documented in `docs/ui/design-system.md`
 
 ## Working Agreement
 
