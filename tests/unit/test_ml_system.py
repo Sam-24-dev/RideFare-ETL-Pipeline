@@ -18,7 +18,12 @@ def test_default_paths_include_ml_artifact_locations() -> None:
 
     assert train_config.artifacts_dir == project_root / "data" / "processed" / "ml"
     assert train_config.run_dir == train_config.artifacts_dir / "runs" / "unit-run"
+    assert export_config.duckdb_path == project_root / "data" / "processed" / "ridefare.duckdb"
     assert export_config.web_output_dir == train_config.artifacts_dir / "web"
+    assert (
+        export_config.analytics_output_dir
+        == project_root / "data" / "processed" / "analytics" / "web"
+    )
     assert export_config.selected_run_dir == train_config.run_dir
 
 

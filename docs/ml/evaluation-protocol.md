@@ -57,3 +57,30 @@ Outputs include:
 - SHAP global importance
 - bounded sample-level SHAP records
 - PNG plots for inspection
+
+## Public Scenario Simulator
+
+The public `/escenarios` page consumes exported artifacts from `data/processed/ml/web/`.
+
+RideFare now supports two simulator modes:
+
+- `model_direct`
+- `hybrid_fallback`
+
+### `model_direct`
+
+The scenario grid is exported directly from the preprocessing pipeline plus the trained `XGBoost` regressor.
+
+### `hybrid_fallback`
+
+If the exported grid is degenerate for a public simulator, RideFare rebuilds the scenario grid with a bounded hybrid layer that keeps the same artifact shape while producing meaningful variation across:
+
+- route baseline price
+- time block
+- weather profile
+- demand level
+- distance factor
+
+The fallback is activated when the direct grid has too few unique prices or an unusably narrow span. This avoids shipping a public UI where every scenario looks identical on very small samples.
+
+The fallback does not replace model training or champion selection. It only stabilizes the exported simulator grid for the public web product.

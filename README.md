@@ -3,8 +3,8 @@
 RideFare is being rebuilt as a portfolio-grade data product that combines analytics
 engineering, machine learning, and product-focused frontend delivery.
 
-The repository has completed the `Foundation`, `Data Platform`, and `ML System` phases.
-The next major milestone is the public `Web Product`.
+Phases `1` through `4` are implemented on the supported Python `3.13` toolchain.
+`Deployment and Automation` plus final portfolio polish remain after this branch.
 
 ## Project Direction
 
@@ -36,8 +36,26 @@ The legacy assets have been preserved as references while the new platform is be
 - `ridefare train` command that reads `mart_model_features` and writes versioned ML runs
 - baseline models with deterministic comparison against the primary `XGBoost` model
 - temporal evaluation outputs, holdout predictions, feature importance, and SHAP artifacts
-- `ridefare export-web` command that writes frontend-ready JSON files under `data/processed/ml/web`
+- `ridefare export-web` command that writes frontend-ready JSON files under
+  `data/processed/ml/web` and `data/processed/analytics/web`
 - model documentation in `docs/ml/`
+
+## Web Product Deliverables
+
+- Spanish public routes for `/`, `/dashboard`, `/como-funciona`, and `/escenarios`
+- typed frontend data loaders backed by exported JSON artifacts and runtime `zod` validation
+- editorial analytics dashboard with ECharts visualizations and client-side filters
+- public `/como-funciona` page that translates pipeline and ML decisions into portfolio-ready copy
+- public `/escenarios` page driven by exported artifacts and a scenario simulator
+- `Escenarios` formally replaces the earlier `Model lab` concept as the public predictive surface
+- visual system documented in `docs/ui/design-system.md`
+
+## Python Compatibility
+
+- The supported local runtime is `Python 3.13`
+- `pyproject.toml` is pinned to `>=3.12,<3.14`
+- `dbt` in this repository is not stable on Python `3.14`, so local pipeline validation must run inside the `3.13` virtual environment created by `scripts/bootstrap.ps1`
+- On Windows, prefer `scripts/validate-python.ps1` or `.\.venv\Scripts\python.exe -m pytest`; a bare `pytest` command may still resolve to a global Python `3.14` installation
 
 ## Working Agreement
 

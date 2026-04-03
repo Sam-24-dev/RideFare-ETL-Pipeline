@@ -54,7 +54,9 @@ class ExportWebConfig:
     """Resolved configuration for the export-web command."""
 
     project_root: Path
+    duckdb_path: Path
     artifacts_dir: Path
+    analytics_output_dir: Path
     run_id: str
     selected_run_dir: Path
     web_output_dir: Path
@@ -77,6 +79,7 @@ class RideFarePaths:
     dbt_project_dir: Path
     dbt_profiles_dir: Path
     ml_artifacts_dir: Path
+    analytics_artifacts_dir: Path
     samples_dir: Path
 
     @classmethod
@@ -93,6 +96,7 @@ class RideFarePaths:
             dbt_project_dir=root / "dbt",
             dbt_profiles_dir=data_dir / "processed" / "dbt_profiles",
             ml_artifacts_dir=data_dir / "processed" / "ml",
+            analytics_artifacts_dir=data_dir / "processed" / "analytics",
             samples_dir=data_dir / "samples",
         )
 
@@ -172,7 +176,9 @@ class RideFarePaths:
             selected_run_dir = resolved_artifacts_dir / "runs" / selected_run_id
         return ExportWebConfig(
             project_root=self.project_root,
+            duckdb_path=self.duckdb_path,
             artifacts_dir=resolved_artifacts_dir,
+            analytics_output_dir=self.analytics_artifacts_dir / "web",
             run_id=selected_run_id,
             selected_run_dir=selected_run_dir,
             web_output_dir=_resolve_candidate(
