@@ -288,7 +288,7 @@ async function loadRunManifest(): Promise<LoadState<RunManifest>> {
 
   if (!(await fileExists(filePath))) {
     return missingState(
-      "TodavÃ­a no hay manifiesto de ejecuciÃ³n exportado. Ejecuta ridefare train y ridefare export-web para documentar el proceso pÃºblico.",
+      "Todavía no hay manifiesto de ejecución exportado. Ejecuta ridefare train y ridefare export-web para documentar el proceso público.",
     );
   }
 

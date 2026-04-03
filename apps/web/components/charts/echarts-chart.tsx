@@ -38,6 +38,7 @@ export function EChartsChart({
   className,
 }: EChartsChartProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<echarts.EChartsType | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -47,7 +48,7 @@ export function EChartsChart({
     const chart = echarts.init(containerRef.current, undefined, {
       renderer: "canvas",
     });
-    chart.setOption(option);
+    chartRef.current = chart;
 
     const resizeObserver = new ResizeObserver(() => {
       chart.resize({
@@ -61,8 +62,20 @@ export function EChartsChart({
 
     return () => {
       resizeObserver.disconnect();
+      chartRef.current = null;
       chart.dispose();
     };
+  }, []);
+
+  useEffect(() => {
+    if (!chartRef.current) {
+      return;
+    }
+
+    chartRef.current.setOption(option, {
+      notMerge: true,
+      lazyUpdate: true,
+    });
   }, [option]);
 
   return <div ref={containerRef} className={cn("h-80 w-full", className)} />;
