@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   loadDashboardPayload,
   loadHomeSnapshot,
+  loadHowItWorksSnapshot,
   loadModelLabPayload,
 } from "../../lib/data/loaders";
 
@@ -26,10 +27,12 @@ describe("web data loaders", () => {
 
     const dashboard = await loadDashboardPayload();
     const home = await loadHomeSnapshot();
+    const howItWorks = await loadHowItWorksSnapshot();
     const modelLab = await loadModelLabPayload();
 
     expect(dashboard.status).toBe("missing");
     expect(home.status).toBe("missing");
+    expect(howItWorks.status).toBe("missing");
     expect(modelLab.status).toBe("missing");
   });
 
@@ -125,6 +128,7 @@ describe("web data loaders", () => {
       JSON.stringify({
         generated_at: "2026-03-30T00:00:00+00:00",
         model_name: "xgboost",
+        simulator_mode: "hybrid_fallback",
         default_day_of_week: 1,
         sources: ["North End"],
         destinations_by_source: { "North End": ["Back Bay"] },
@@ -261,10 +265,12 @@ describe("web data loaders", () => {
 
     const dashboard = await loadDashboardPayload();
     const home = await loadHomeSnapshot();
+    const howItWorks = await loadHowItWorksSnapshot();
     const modelLab = await loadModelLabPayload();
 
     expect(dashboard.status).toBe("ready");
     expect(home.status).toBe("ready");
+    expect(howItWorks.status).toBe("ready");
     expect(modelLab.status).toBe("ready");
 
     if (dashboard.status === "ready") {
@@ -281,9 +287,107 @@ describe("web data loaders", () => {
       expect(home.data.dominantRoute).toBe("North End → Back Bay");
     }
 
+    if (howItWorks.status === "ready") {
+      expect(howItWorks.data.generatedAt).toBe("2026-03-30T00:00:00+00:00");
+      expect(howItWorks.data.featureCount).toBe(4);
+      expect(howItWorks.data.sourceCount).toBe(1);
+      expect(howItWorks.data.destinationCount).toBe(1);
+      expect(howItWorks.data.cabTypeCount).toBe(1);
+      expect(howItWorks.data.championModel).toBe("xgboost");
+      expect(howItWorks.data.explainabilityModel).toBe("xgboost");
+      expect(howItWorks.data.hasTemporalSplit).toBe(true);
+      expect(howItWorks.data.timeRange.max).toBe("2024-01-03T00:00:00");
+      expect(howItWorks.data.topSignals[0]).toEqual({
+        label: "Distancia",
+        score: 0.42,
+      });
+    }
+
     if (modelLab.status === "ready") {
       expect(modelLab.data.simulator.controls.sources).toContain("North End");
+      expect(modelLab.data.simulator.controls.simulator_mode).toBe("hybrid_fallback");
       expect(modelLab.data.featureImportance[0]?.feature).toBe("distance");
+    }
+  });
+
+  it("falls back to shap importance when feature importance is missing", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ridefare-web-shap-fallback-"));
+    tempRoots.push(tempRoot);
+    process.env.RIDEFARE_PROJECT_ROOT = tempRoot;
+
+    const mlDir = join(tempRoot, "data", "processed", "ml", "web");
+    const analyticsDir = join(tempRoot, "data", "processed", "analytics", "web");
+    mkdirSync(mlDir, { recursive: true });
+    mkdirSync(analyticsDir, { recursive: true });
+
+    writeFileSync(
+      join(mlDir, "model_overview.json"),
+      JSON.stringify({
+        run_id: "demo-run",
+        generated_at: "2026-03-30T00:00:00+00:00",
+        champion_model: "xgboost",
+        explainability_model: "xgboost",
+        row_count: 128,
+        time_range: {
+          min: "2024-01-01T00:00:00",
+          max: "2024-01-03T00:00:00",
+        },
+        feature_columns: ["distance", "surge_multiplier", "source", "destination"],
+        holdout_rows: 26,
+        development_rows: 102,
+      }),
+      "utf-8",
+    );
+    writeFileSync(
+      join(mlDir, "run_manifest.json"),
+      JSON.stringify({
+        run_id: "demo-run",
+        generated_at: "2026-03-30T00:00:00+00:00",
+        dataset: {
+          row_count: 128,
+          feature_columns: ["distance", "surge_multiplier", "source", "destination"],
+          time_range: { min: "2024-01-01T00:00:00", max: "2024-01-03T00:00:00" },
+        },
+        split_plan: { holdout_rows: 26, development_rows: 102 },
+      }),
+      "utf-8",
+    );
+    writeFileSync(
+      join(mlDir, "shap_summary.json"),
+      JSON.stringify({
+        model_name: "xgboost",
+        global_importance: [
+          { feature: "numeric__surge_multiplier", mean_abs_shap: 0.66 },
+          { feature: "numeric__distance", mean_abs_shap: 0.5 },
+        ],
+        samples: [],
+      }),
+      "utf-8",
+    );
+    writeFileSync(
+      join(analyticsDir, "dashboard_overview.json"),
+      JSON.stringify({
+        generated_at: "2026-03-30T00:00:00+00:00",
+        time_range: { min: "2024-01-01T00:00:00", max: "2024-01-03T00:00:00" },
+        dimensions: { sources: 1, destinations: 1, cab_types: 1 },
+        kpis: [],
+      }),
+      "utf-8",
+    );
+
+    const howItWorks = await loadHowItWorksSnapshot();
+
+    expect(howItWorks.status).toBe("ready");
+
+    if (howItWorks.status === "ready") {
+      expect(howItWorks.data.topSignals[0]).toEqual({
+        label: "Demanda",
+        score: 0.66,
+      });
+      expect(howItWorks.data.topSignals[1]).toEqual({
+        label: "Distancia",
+        score: 0.5,
+      });
     }
   });
 });

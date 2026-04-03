@@ -19,7 +19,7 @@ const pipelineSteps = [
   },
   {
     id: "04",
-    title: "Escenarios ML",
+    title: "Escenarios",
     stack: "XGBoost + SHAP",
     description: "Benchmark, explicabilidad y simulación exportada sin inferencia en vivo.",
   },

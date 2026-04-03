@@ -15,7 +15,11 @@ import duckdb
 import numpy as np
 import pandas as pd
 import polars as pl
-from xgboost import XGBRegressor
+
+try:
+    from xgboost import XGBRegressor
+except ModuleNotFoundError:  # pragma: no cover - exercised through fallback mode
+    XGBRegressor = None  # type: ignore[assignment]
 
 from ridefare.config import ExportWebConfig
 from ridefare.exceptions import ExportArtifactsError, MissingArtifactError
@@ -345,65 +349,36 @@ def build_scenario_payload(
     xgboost_metrics = metrics["models"]["xgboost"]["holdout"]
     model_rmse = float(xgboost_metrics["rmse"])
 
-    with preprocessor_path.open("rb") as file_handle:
-        preprocessor = pickle.load(file_handle)
-
-    estimator = XGBRegressor()
-    estimator.load_model(model_path)
-
     route_catalog = build_route_catalog(dataset_snapshot)
+    route_baselines = build_route_baselines(dataset_snapshot)
     weather_profiles = build_weather_profiles(dataset_snapshot)
+    weather_multipliers = build_weather_profile_multipliers(dataset_snapshot, weather_profiles)
     surge_levels = build_surge_levels(dataset_snapshot)
+    time_multipliers = build_time_block_multipliers(dataset_snapshot)
     default_day_of_week = most_common_int(dataset_snapshot["ride_day_of_week"].dropna())
+    direct_grid_rows = build_direct_scenario_grid(
+        route_catalog=route_catalog,
+        weather_profiles=weather_profiles,
+        surge_levels=surge_levels,
+        default_day_of_week=default_day_of_week,
+        model_path=model_path,
+        preprocessor_path=preprocessor_path,
+        model_rmse=model_rmse,
+    )
 
-    grid_rows: list[dict[str, object]] = []
-    for route in route_catalog:
-        for time_block in TIME_BLOCKS:
-            for weather_profile in weather_profiles:
-                for surge_multiplier in surge_levels:
-                    for distance_option in DISTANCE_FACTORS:
-                        prediction_frame = pd.DataFrame(
-                            [
-                                {
-                                    "distance": max(
-                                        float(route["median_distance"])
-                                        * float(distance_option["factor"]),
-                                        0.1,
-                                    ),
-                                    "surge_multiplier": surge_multiplier,
-                                    "temp": weather_profile["values"]["temp"],
-                                    "clouds": weather_profile["values"]["clouds"],
-                                    "pressure": weather_profile["values"]["pressure"],
-                                    "rain": weather_profile["values"]["rain"],
-                                    "humidity": weather_profile["values"]["humidity"],
-                                    "wind": weather_profile["values"]["wind"],
-                                    "ride_hour_of_day": time_block["anchor_hour"],
-                                    "ride_day_of_week": default_day_of_week,
-                                    "source": route["source"],
-                                    "destination": route["destination"],
-                                    "cab_type": route["cab_type"],
-                                    "ride_name": route["ride_name"],
-                                }
-                            ]
-                        )
-                        transformed = np.asarray(preprocessor.transform(prediction_frame))
-                        predicted_price = float(estimator.predict(transformed)[0])
-                        grid_rows.append(
-                            {
-                                "source": route["source"],
-                                "destination": route["destination"],
-                                "cab_type": route["cab_type"],
-                                "ride_name": route["ride_name"],
-                                "route_distance_median": route["median_distance"],
-                                "time_block": time_block["id"],
-                                "weather_profile": weather_profile["id"],
-                                "surge_multiplier": surge_multiplier,
-                                "distance_factor": distance_option["factor"],
-                                "predicted_price": predicted_price,
-                                "price_band_low": max(predicted_price - model_rmse, 0.0),
-                                "price_band_high": predicted_price + model_rmse,
-                            }
-                        )
+    simulator_mode = "model_direct"
+    grid_rows = direct_grid_rows
+    if is_scenario_grid_degenerate(direct_grid_rows):
+        simulator_mode = "hybrid_fallback"
+        grid_rows = build_hybrid_scenario_grid(
+            route_catalog=route_catalog,
+            route_baselines=route_baselines,
+            weather_profiles=weather_profiles,
+            weather_multipliers=weather_multipliers,
+            surge_levels=surge_levels,
+            time_multipliers=time_multipliers,
+            model_rmse=model_rmse,
+        )
 
     destinations_by_source: dict[str, list[str]] = {}
     for route in route_catalog:
@@ -416,6 +391,7 @@ def build_scenario_payload(
     controls = {
         "generated_at": datetime.now(tz=UTC),
         "model_name": "xgboost",
+        "simulator_mode": simulator_mode,
         "default_day_of_week": default_day_of_week,
         "sources": sorted(destinations_by_source),
         "destinations_by_source": destinations_by_source,
@@ -432,25 +408,57 @@ def build_scenario_payload(
 def build_route_catalog(dataset_snapshot: pd.DataFrame) -> list[dict[str, object]]:
     """Return a bounded set of representative routes for the simulator."""
 
+    baselines = build_route_baselines(dataset_snapshot)
+    grouped = pd.DataFrame(
+        [
+            {
+                "source": source,
+                "destination": destination,
+                "cab_type": cab_type,
+                "ride_name": values["ride_name"],
+                "median_distance": values["median_distance"],
+                "total_rides": values["total_rides"],
+                "base_price": values["base_price"],
+                "route_volatility": values["route_volatility"],
+            }
+            for (source, destination, cab_type), values in baselines.items()
+        ]
+    )
     grouped = (
-        dataset_snapshot.groupby(["source", "destination", "cab_type"], as_index=False)
-        .apply(
-            lambda group: pd.Series(
-                {
-                    "ride_name": most_common_text(group["ride_name"]),
-                    "median_distance": float(group["distance"].median()),
-                    "total_rides": int(group["ride_id"].count()),
-                }
-            ),
-            include_groups=False,
-        )
-        .sort_values(
+        grouped.sort_values(
             ["total_rides", "median_distance", "source", "destination", "cab_type"],
             ascending=[False, True, True, True, True],
         )
         .head(24)
     )
     return grouped.to_dict(orient="records")
+
+
+def build_route_baselines(
+    dataset_snapshot: pd.DataFrame,
+) -> dict[tuple[str, str, str], dict[str, float | int | str]]:
+    """Build stable route-level baselines for the public simulator."""
+
+    global_price_std = float(dataset_snapshot["price"].astype(float).std(ddof=0))
+    global_price_median = float(dataset_snapshot["price"].astype(float).median())
+    baseline_floor = max(global_price_std * 1.15, 1.5)
+
+    baselines: dict[tuple[str, str, str], dict[str, float | int | str]] = {}
+    for route_key, group in dataset_snapshot.groupby(["source", "destination", "cab_type"]):
+        base_price = float(group["price"].astype(float).median())
+        median_distance = float(group["distance"].astype(float).median())
+        observed_volatility = float(group["price"].astype(float).std(ddof=0))
+        if not np.isfinite(observed_volatility) or observed_volatility < 0.01:
+            observed_volatility = baseline_floor + abs(base_price - global_price_median)
+        baselines[tuple(str(value) for value in route_key)] = {
+            "ride_name": most_common_text(group["ride_name"]),
+            "base_price": round(base_price, 2),
+            "median_distance": round(median_distance, 2),
+            "route_volatility": round(max(observed_volatility, 1.5), 2),
+            "total_rides": int(group["ride_id"].count()),
+        }
+
+    return baselines
 
 
 def build_weather_profiles(dataset_snapshot: pd.DataFrame) -> list[dict[str, object]]:
@@ -538,6 +546,48 @@ def build_weather_profiles(dataset_snapshot: pd.DataFrame) -> list[dict[str, obj
     ]
 
 
+def build_weather_profile_multipliers(
+    dataset_snapshot: pd.DataFrame,
+    weather_profiles: list[dict[str, object]],
+) -> dict[str, float]:
+    """Translate public weather profiles into bounded scenario multipliers."""
+
+    numeric = dataset_snapshot.loc[:, ["temp", "clouds", "rain", "humidity", "wind"]].astype(
+        float
+    )
+    median = numeric.median(numeric_only=True)
+    spread = (
+        numeric.quantile(0.75, numeric_only=True) - numeric.quantile(0.25, numeric_only=True)
+    ).replace(0, np.nan)
+    fallback_spread = numeric.std(numeric_only=True, ddof=0).replace(0, np.nan)
+    scale = spread.fillna(fallback_spread).fillna(1.0)
+
+    def signed_delta(column: str, value: float, *, invert: bool = False) -> float:
+        reference = float(median[column])
+        denominator = max(float(scale[column]), 1.0)
+        delta = (reference - value) if invert else (value - reference)
+        return float(np.clip(delta / denominator, -1.5, 1.5))
+
+    multipliers: dict[str, float] = {}
+    for profile in weather_profiles:
+        if str(profile["id"]) == "despejado":
+            multipliers[str(profile["id"])] = 1.0
+            continue
+        values = profile["values"]
+        severity = (
+            0.34 * max(signed_delta("rain", float(values["rain"])), 0.0)
+            + 0.2 * max(signed_delta("clouds", float(values["clouds"])), 0.0)
+            + 0.18 * max(signed_delta("humidity", float(values["humidity"])), 0.0)
+            + 0.16 * max(signed_delta("wind", float(values["wind"])), 0.0)
+            + 0.12 * max(signed_delta("temp", float(values["temp"]), invert=True), 0.0)
+        )
+        multipliers[str(profile["id"])] = round(
+            float(np.clip(1 + severity * 0.07, 1.0, 1.22)), 4
+        )
+
+    return multipliers
+
+
 def build_surge_levels(dataset_snapshot: pd.DataFrame) -> list[float]:
     """Return a bounded set of surge levels grounded in the observed data."""
 
@@ -561,6 +611,337 @@ def build_surge_levels(dataset_snapshot: pd.DataFrame) -> list[float]:
         .tolist()
     )
     return sorted({float(value) for value in quantiles if float(value) > 0})
+
+
+def build_time_block_multipliers(dataset_snapshot: pd.DataFrame) -> dict[str, float]:
+    """Estimate bounded time-of-day effects for each public block."""
+
+    snapshot = dataset_snapshot.copy()
+    snapshot["time_block"] = snapshot["ride_hour_of_day"].apply(map_hour_to_time_block)
+    global_price_median = float(snapshot["price"].astype(float).median())
+    global_hour_median = float(snapshot["ride_hour_of_day"].astype(float).median())
+    observed_block_medians = (
+        snapshot.groupby("time_block")["price"].median().to_dict()
+        if not snapshot.empty
+        else {}
+    )
+
+    multipliers: dict[str, float] = {}
+    for block in TIME_BLOCKS:
+        block_id = str(block["id"])
+        if block_id in observed_block_medians:
+            raw_multiplier = float(observed_block_medians[block_id]) / max(
+                global_price_median, 0.01
+            )
+        else:
+            hour_offset = (float(block["anchor_hour"]) - global_hour_median) / 12
+            raw_multiplier = 1 + hour_offset * 0.04
+        multipliers[block_id] = round(float(np.clip(raw_multiplier, 0.94, 1.16)), 4)
+
+    return multipliers
+
+
+def build_direct_scenario_grid(
+    *,
+    route_catalog: list[dict[str, object]],
+    weather_profiles: list[dict[str, object]],
+    surge_levels: list[float],
+    default_day_of_week: int,
+    model_path: Path,
+    preprocessor_path: Path,
+    model_rmse: float,
+) -> list[dict[str, object]]:
+    """Generate the direct grid using the exported XGBoost model when available."""
+
+    if XGBRegressor is None:
+        return []
+
+    with preprocessor_path.open("rb") as file_handle:
+        preprocessor = pickle.load(file_handle)
+
+    estimator = XGBRegressor()
+    estimator.load_model(model_path)
+
+    grid_rows: list[dict[str, object]] = []
+    for route in route_catalog:
+        for time_block in TIME_BLOCKS:
+            for weather_profile in weather_profiles:
+                for surge_multiplier in surge_levels:
+                    for distance_option in DISTANCE_FACTORS:
+                        prediction_frame = pd.DataFrame(
+                            [
+                                {
+                                    "distance": max(
+                                        float(route["median_distance"])
+                                        * float(distance_option["factor"]),
+                                        0.1,
+                                    ),
+                                    "surge_multiplier": surge_multiplier,
+                                    "temp": weather_profile["values"]["temp"],
+                                    "clouds": weather_profile["values"]["clouds"],
+                                    "pressure": weather_profile["values"]["pressure"],
+                                    "rain": weather_profile["values"]["rain"],
+                                    "humidity": weather_profile["values"]["humidity"],
+                                    "wind": weather_profile["values"]["wind"],
+                                    "ride_hour_of_day": time_block["anchor_hour"],
+                                    "ride_day_of_week": default_day_of_week,
+                                    "source": route["source"],
+                                    "destination": route["destination"],
+                                    "cab_type": route["cab_type"],
+                                    "ride_name": route["ride_name"],
+                                }
+                            ]
+                        )
+                        transformed = np.asarray(preprocessor.transform(prediction_frame))
+                        predicted_price = float(estimator.predict(transformed)[0])
+                        grid_rows.append(
+                            build_scenario_row(
+                                route=route,
+                                time_block_id=str(time_block["id"]),
+                                weather_profile_id=str(weather_profile["id"]),
+                                surge_multiplier=float(surge_multiplier),
+                                distance_factor=float(distance_option["factor"]),
+                                predicted_price=predicted_price,
+                                band_half_width=model_rmse,
+                            )
+                        )
+
+    return grid_rows
+
+
+def build_hybrid_scenario_grid(
+    *,
+    route_catalog: list[dict[str, object]],
+    route_baselines: dict[tuple[str, str, str], dict[str, float | int | str]],
+    weather_profiles: list[dict[str, object]],
+    weather_multipliers: dict[str, float],
+    surge_levels: list[float],
+    time_multipliers: dict[str, float],
+    model_rmse: float,
+) -> list[dict[str, object]]:
+    """Build a stable public scenario grid when direct model outputs are degenerate."""
+
+    route_response_profiles = build_route_response_profiles(route_baselines)
+    grid_rows: list[dict[str, object]] = []
+    for route in route_catalog:
+        route_key = (str(route["source"]), str(route["destination"]), str(route["cab_type"]))
+        baseline = route_baselines[route_key]
+        response_profile = route_response_profiles[route_key]
+        route_base_price = float(baseline["base_price"])
+        route_volatility = float(baseline["route_volatility"])
+        for time_block in TIME_BLOCKS:
+            # Normalize time effects to a public-facing range so the simulator remains legible
+            # even when the sampled snapshot only contains a few observed hours.
+            time_pressure = float(
+                np.clip(
+                    (float(time_multipliers[str(time_block["id"])]) - 1.0) / 0.03,
+                    -0.65,
+                    1.0,
+                )
+            )
+            for weather_profile in weather_profiles:
+                # Weather profiles are exported as bounded multipliers. Recover the profile
+                # severity so route-specific sensitivities can produce differentiated outcomes.
+                weather_pressure = float(
+                    np.clip(
+                        (float(weather_multipliers[str(weather_profile["id"])]) - 1.0) / 0.07,
+                        0.0,
+                        1.0,
+                    )
+                )
+                for surge_multiplier in surge_levels:
+                    demand_pressure = float(
+                        np.clip((float(surge_multiplier) - 1.0) / 0.5, 0.0, 1.0)
+                    )
+                    for distance_option in DISTANCE_FACTORS:
+                        demand_component = demand_pressure * float(
+                            response_profile["demand_sensitivity"]
+                        )
+                        weather_component = weather_pressure * float(
+                            response_profile["weather_sensitivity"]
+                        )
+                        time_component = time_pressure * float(
+                            response_profile["time_sensitivity"]
+                        )
+                        interaction_component = (
+                            demand_pressure
+                            * weather_pressure
+                            * float(response_profile["interaction_sensitivity"])
+                            + max(time_pressure, 0.0)
+                            * demand_pressure
+                            * float(response_profile["interaction_sensitivity"])
+                            * 0.55
+                            + max(time_pressure, 0.0)
+                            * weather_pressure
+                            * float(response_profile["interaction_sensitivity"])
+                            * 0.35
+                        )
+                        scenario_multiplier = max(
+                            0.72,
+                            1
+                            + demand_component
+                            + weather_component
+                            + time_component
+                            + interaction_component,
+                        )
+                        predicted_price = (
+                            route_base_price
+                            * scenario_multiplier
+                            * float(distance_option["factor"])
+                        )
+                        scenario_pressure = (
+                            1
+                            + demand_pressure
+                            * (0.35 + float(response_profile["demand_sensitivity"]))
+                            + weather_pressure
+                            * (0.3 + float(response_profile["weather_sensitivity"]))
+                            + abs(time_pressure)
+                            * (0.24 + float(response_profile["time_sensitivity"]))
+                            + interaction_component * 0.8
+                        )
+                        band_half_width = max(
+                            model_rmse * 0.55,
+                            route_volatility
+                            * 0.75
+                            * float(response_profile["range_sensitivity"])
+                            * scenario_pressure,
+                            1.5,
+                        )
+                        grid_rows.append(
+                            build_scenario_row(
+                                route=route,
+                                time_block_id=str(time_block["id"]),
+                                weather_profile_id=str(weather_profile["id"]),
+                                surge_multiplier=float(surge_multiplier),
+                                distance_factor=float(distance_option["factor"]),
+                                predicted_price=predicted_price,
+                                band_half_width=band_half_width,
+                            )
+                        )
+
+    return grid_rows
+
+
+def build_route_response_profiles(
+    route_baselines: dict[tuple[str, str, str], dict[str, float | int | str]],
+) -> dict[tuple[str, str, str], dict[str, float]]:
+    """Derive bounded route-level sensitivities so relative changes vary by route."""
+
+    distances = [float(values["median_distance"]) for values in route_baselines.values()]
+    base_prices = [float(values["base_price"]) for values in route_baselines.values()]
+    global_distance = max(float(np.median(distances)), 0.1)
+    global_price = max(float(np.median(base_prices)), 0.1)
+
+    profiles: dict[tuple[str, str, str], dict[str, float]] = {}
+    for route_key, values in route_baselines.items():
+        distance_ratio = float(values["median_distance"]) / global_distance
+        price_ratio = float(values["base_price"]) / global_price
+        profiles[route_key] = {
+            "demand_sensitivity": round(
+                float(
+                    np.clip(
+                        0.26 + (distance_ratio - 1) * 0.18 + (price_ratio - 1) * 0.12,
+                        0.16,
+                        0.55,
+                    )
+                ),
+                4,
+            ),
+            "weather_sensitivity": round(
+                float(
+                    np.clip(
+                        0.18 + (distance_ratio - 1) * 0.14 + (price_ratio - 1) * 0.1,
+                        0.1,
+                        0.4,
+                    )
+                ),
+                4,
+            ),
+            "time_sensitivity": round(
+                float(
+                    np.clip(
+                        0.14 + (distance_ratio - 1) * 0.08 + (price_ratio - 1) * 0.06,
+                        0.08,
+                        0.3,
+                    )
+                ),
+                4,
+            ),
+            "interaction_sensitivity": round(
+                float(
+                    np.clip(
+                        0.08 + (distance_ratio - 1) * 0.09 + (price_ratio - 1) * 0.05,
+                        0.04,
+                        0.22,
+                    )
+                ),
+                4,
+            ),
+            "range_sensitivity": round(
+                float(
+                    np.clip(
+                        0.9 + (distance_ratio - 1) * 0.16 + (price_ratio - 1) * 0.12,
+                        0.76,
+                        1.22,
+                    )
+                ),
+                4,
+            ),
+        }
+
+    return profiles
+
+
+def build_scenario_row(
+    *,
+    route: dict[str, object],
+    time_block_id: str,
+    weather_profile_id: str,
+    surge_multiplier: float,
+    distance_factor: float,
+    predicted_price: float,
+    band_half_width: float,
+) -> dict[str, object]:
+    """Normalize one public scenario row."""
+
+    safe_price = round(max(predicted_price, 0.1), 2)
+    safe_band_half_width = round(max(band_half_width, 1.5), 2)
+    return {
+        "source": route["source"],
+        "destination": route["destination"],
+        "cab_type": route["cab_type"],
+        "ride_name": route["ride_name"],
+        "route_distance_median": round(float(route["median_distance"]), 2),
+        "time_block": time_block_id,
+        "weather_profile": weather_profile_id,
+        "surge_multiplier": surge_multiplier,
+        "distance_factor": distance_factor,
+        "predicted_price": safe_price,
+        "price_band_low": round(max(safe_price - safe_band_half_width, 0.0), 2),
+        "price_band_high": round(safe_price + safe_band_half_width, 2),
+    }
+
+
+def is_scenario_grid_degenerate(grid_rows: list[dict[str, object]]) -> bool:
+    """Detect flat grids that do not support a meaningful public simulator."""
+
+    if not grid_rows:
+        return True
+
+    rounded_prices = [round(float(row["predicted_price"]), 2) for row in grid_rows]
+    unique_prices = set(rounded_prices)
+    price_span = max(rounded_prices) - min(rounded_prices)
+    return len(unique_prices) < 4 or price_span < 0.50
+
+
+def map_hour_to_time_block(hour: float | int) -> str:
+    """Map an observed hour to the public time block id."""
+
+    integer_hour = int(hour)
+    for block in TIME_BLOCKS:
+        if integer_hour in block["hours"]:
+            return str(block["id"])
+    return str(TIME_BLOCKS[-1]["id"])
 
 
 def weighted_average(values: pd.Series, weights: pd.Series) -> float:

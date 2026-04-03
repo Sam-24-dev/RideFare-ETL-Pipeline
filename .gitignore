@@ -14,6 +14,7 @@ __pycache__/
 *.parquet
 *.feather
 *.log
+artifacts-*.png
 
 node_modules/
 apps/web/node_modules/

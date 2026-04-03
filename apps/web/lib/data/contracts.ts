@@ -97,6 +97,7 @@ export const runManifestSchema = z.object({
 export const scenarioControlsSchema = z.object({
   generated_at: z.string(),
   model_name: z.string(),
+  simulator_mode: z.enum(["model_direct", "hybrid_fallback"]),
   default_day_of_week: z.number(),
   sources: z.array(z.string()),
   destinations_by_source: z.record(z.string(), z.array(z.string())),

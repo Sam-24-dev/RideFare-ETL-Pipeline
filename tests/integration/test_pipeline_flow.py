@@ -144,7 +144,18 @@ def test_train_and_export_web_produce_ml_artifacts(sample_workspace: Path) -> No
     }
     assert metrics["models"]
     assert web_overview["champion_model"] == comparison["champion_model"]
+    assert scenario_controls["simulator_mode"] in {"model_direct", "hybrid_fallback"}
     assert scenario_controls["sources"]
     assert scenario_controls["weather_profiles"]
     assert scenario_grid
+    assert len({round(row["predicted_price"], 2) for row in scenario_grid}) > 1
+    assert (
+        len(
+            {
+                (round(row["price_band_low"], 2), round(row["price_band_high"], 2))
+                for row in scenario_grid
+            }
+        )
+        > 1
+    )
     assert dashboard_overview["kpis"]

@@ -44,6 +44,22 @@ export type HomeSnapshot = {
   dimensions: DashboardOverview["dimensions"];
 };
 
+export type HowItWorksSnapshot = {
+  generatedAt: string;
+  featureCount: number;
+  timeRange: ModelOverview["time_range"];
+  sourceCount: number;
+  destinationCount: number;
+  cabTypeCount: number;
+  championModel: string;
+  explainabilityModel: string;
+  hasTemporalSplit: boolean;
+  topSignals: Array<{
+    label: string;
+    score: number;
+  }>;
+};
+
 export type DashboardPayload = {
   overview: DashboardOverview;
   timeseries: DashboardTimeseries;
@@ -131,6 +147,44 @@ export async function loadDashboardPayload(): Promise<LoadState<DashboardPayload
       routeBreakdown,
       weatherImpact,
       filters,
+    },
+  };
+}
+
+export async function loadHowItWorksSnapshot(): Promise<LoadState<HowItWorksSnapshot>> {
+  const modelOverviewState = await loadModelOverview();
+  if (modelOverviewState.status === "missing") {
+    return modelOverviewState;
+  }
+
+  const dashboardOverviewState = await loadDashboardOverview();
+  if (dashboardOverviewState.status === "missing") {
+    return dashboardOverviewState;
+  }
+
+  const runManifestState = await loadRunManifest();
+  if (runManifestState.status === "missing") {
+    return runManifestState;
+  }
+
+  const overview = modelOverviewState.data;
+  const dashboardOverview = dashboardOverviewState.data;
+  const runManifest = runManifestState.data;
+  const topSignals = await loadHowItWorksSignals();
+
+  return {
+    status: "ready",
+    data: {
+      generatedAt: runManifest.generated_at,
+      featureCount: overview.feature_columns.length,
+      timeRange: runManifest.dataset.time_range,
+      sourceCount: dashboardOverview.dimensions.sources,
+      destinationCount: dashboardOverview.dimensions.destinations,
+      cabTypeCount: dashboardOverview.dimensions.cab_types,
+      championModel: overview.champion_model,
+      explainabilityModel: overview.explainability_model,
+      hasTemporalSplit: overview.holdout_rows > 0 || runManifest.split_plan.holdout_rows > 0,
+      topSignals,
     },
   };
 }
@@ -226,6 +280,141 @@ async function loadDashboardOverview(): Promise<LoadState<DashboardOverview>> {
     status: "ready",
     data: await parseJson(filePath, dashboardOverviewSchema),
   };
+}
+
+async function loadRunManifest(): Promise<LoadState<RunManifest>> {
+  const projectRoot = resolveProjectRoot();
+  const filePath = path.join(projectRoot, "data", "processed", "ml", "web", "run_manifest.json");
+
+  if (!(await fileExists(filePath))) {
+    return missingState(
+      "TodavÃ­a no hay manifiesto de ejecuciÃ³n exportado. Ejecuta ridefare train y ridefare export-web para documentar el proceso pÃºblico.",
+    );
+  }
+
+  return {
+    status: "ready",
+    data: await parseJson(filePath, runManifestSchema),
+  };
+}
+
+async function loadHowItWorksSignals(): Promise<HowItWorksSnapshot["topSignals"]> {
+  const projectRoot = resolveProjectRoot();
+  const mlDir = path.join(projectRoot, "data", "processed", "ml", "web");
+  const featureImportancePath = path.join(mlDir, "feature_importance.json");
+  const shapSummaryPath = path.join(mlDir, "shap_summary.json");
+
+  const [featureImportance, shapSummary] = await Promise.all([
+    (async () => {
+      if (!(await fileExists(featureImportancePath))) {
+        return null;
+      }
+      return parseJson(featureImportancePath, featureImportanceSchema);
+    })(),
+    (async () => {
+      if (!(await fileExists(shapSummaryPath))) {
+        return null;
+      }
+      return parseJson(shapSummaryPath, shapSummarySchema);
+    })(),
+  ]);
+
+  return buildHowItWorksTopSignals(featureImportance, shapSummary);
+}
+
+function buildHowItWorksTopSignals(
+  featureImportance: FeatureImportance | null,
+  shapSummary: ShapSummary | null,
+): HowItWorksSnapshot["topSignals"] {
+  const preferredImportance = featureImportance?.filter((entry) => entry.importance > 0) ?? [];
+  const preferredShap =
+    shapSummary?.global_importance.filter((entry) => entry.mean_abs_shap > 0) ?? [];
+
+  const rawSignals =
+    preferredImportance.length > 0
+      ? preferredImportance.map((entry) => ({
+          feature: entry.feature,
+          score: entry.importance,
+        }))
+      : preferredShap.length > 0
+        ? preferredShap.map((entry) => ({
+            feature: entry.feature,
+            score: entry.mean_abs_shap,
+          }))
+        : (featureImportance ?? shapSummary?.global_importance ?? []).map((entry) => ({
+            feature: entry.feature,
+            score: "importance" in entry ? entry.importance : entry.mean_abs_shap,
+          }));
+
+  const groupedScores = new Map<string, number>();
+
+  for (const signal of rawSignals) {
+    const label = mapSignalLabel(signal.feature);
+    groupedScores.set(label, (groupedScores.get(label) ?? 0) + signal.score);
+  }
+
+  const rankedSignals = Array.from(groupedScores.entries())
+    .sort(
+      (left, right) =>
+        right[1] - left[1] ||
+        getSignalSortOrder(left[0]) - getSignalSortOrder(right[0]) ||
+        left[0].localeCompare(right[0]),
+    )
+    .slice(0, 4)
+    .map(([label, score]) => ({ label, score }));
+
+  if (rankedSignals.length > 0) {
+    return rankedSignals;
+  }
+
+  return [
+    { label: "Distancia", score: 0 },
+    { label: "Demanda", score: 0 },
+    { label: "Clima", score: 0 },
+    { label: "Tráfico y hora", score: 0 },
+  ];
+}
+
+function mapSignalLabel(feature: string): string {
+  const normalizedFeature = feature.toLowerCase();
+
+  if (normalizedFeature.includes("distance") || normalizedFeature.includes("base_fare")) {
+    return "Distancia";
+  }
+
+  if (normalizedFeature.includes("surge") || normalizedFeature.includes("demand")) {
+    return "Demanda";
+  }
+
+  if (
+    normalizedFeature.includes("temp") ||
+    normalizedFeature.includes("cloud") ||
+    normalizedFeature.includes("pressure") ||
+    normalizedFeature.includes("rain") ||
+    normalizedFeature.includes("humidity") ||
+    normalizedFeature.includes("wind") ||
+    normalizedFeature.includes("weather")
+  ) {
+    return "Clima";
+  }
+
+  if (
+    normalizedFeature.includes("hour") ||
+    normalizedFeature.includes("day_of_week") ||
+    normalizedFeature.includes("traffic") ||
+    normalizedFeature.includes("congestion")
+  ) {
+    return "Tráfico y hora";
+  }
+
+  return "Contexto";
+}
+
+function getSignalSortOrder(label: string): number {
+  const preferredOrder = ["Distancia", "Demanda", "Clima", "Tráfico y hora", "Contexto"];
+  const index = preferredOrder.indexOf(label);
+
+  return index === -1 ? preferredOrder.length : index;
 }
 
 async function parseJson<T>(filePath: string, schema: { parse: (value: unknown) => T }): Promise<T> {

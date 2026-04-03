@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 
+import { HomeBackdrop } from "@/components/home/home-visuals";
 import { SiteNavigation } from "@/components/layout/site-navigation";
 
 type SiteShellProps = {
@@ -10,31 +11,24 @@ type SiteShellProps = {
 export function SiteShell({ children }: SiteShellProps): React.ReactElement {
   return (
     <div className="relative min-h-screen overflow-hidden bg-[var(--color-piedra)] text-[var(--color-obsidiana)]">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(125deg,rgba(13,39,59,0.05),transparent_24%,rgba(178,115,64,0.08)_44%,transparent_64%),radial-gradient(circle_at_top_left,rgba(178,115,64,0.12),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(31,90,126,0.14),transparent_36%)]" />
-      <div className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:radial-gradient(circle_at_1px_1px,var(--color-obsidiana)_1px,transparent_0)] [background-size:24px_24px]" />
-      <div className="relative mx-auto flex min-h-screen max-w-[92rem] flex-col px-4 pb-12 pt-4 md:px-8">
+      <HomeBackdrop />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(178,115,64,0.1),transparent_28%),radial-gradient(circle_at_92%_14%,rgba(31,90,126,0.08),transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.55),rgba(255,255,255,0)_42%)]" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[92rem] flex-col px-4 pb-10 pt-4 sm:px-6 lg:px-10">
         <SiteNavigation />
-        <main className="flex-1 pt-10 md:pt-14">{children}</main>
-        <footer className="mt-20 border-t border-[var(--color-borde)] py-8 text-sm text-[var(--color-pizarra)]">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="font-medium text-[var(--color-obsidiana)]">RideFare</p>
-              <p>Pricing intelligence, analytics engineering y modelado reproducible.</p>
-            </div>
-            <div className="flex flex-wrap gap-4">
-              <Link className="transition-colors hover:text-[var(--color-cobre)]" href="/">
-                Inicio
-              </Link>
-              <Link className="transition-colors hover:text-[var(--color-cobre)]" href="/dashboard">
-                Dashboard
-              </Link>
-              <Link className="transition-colors hover:text-[var(--color-cobre)]" href="/como-funciona">
-                Cómo funciona
-              </Link>
-              <Link className="transition-colors hover:text-[var(--color-cobre)]" href="/escenarios">
-                Escenarios
-              </Link>
-            </div>
+        <main className="flex-1 pt-8 md:pt-12">{children}</main>
+        <footer className="mt-16 border-t border-[color-mix(in_srgb,var(--color-obsidiana),white_88%)] py-6">
+          <div className="max-w-md space-y-1 text-sm text-[var(--color-pizarra)]">
+            <Link
+              href="/"
+              aria-label="Ir al inicio de RideFare"
+              title="Ir al inicio"
+              className="group inline-flex flex-col items-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-laguna)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-piedra)]"
+            >
+              <span className="relative font-display text-2xl tracking-[-0.04em] text-[var(--color-obsidiana)] transition-colors duration-200 group-hover:text-[var(--color-cobre-oscuro)] group-focus-visible:text-[var(--color-cobre-oscuro)] after:absolute after:-bottom-0.5 after:left-0 after:h-px after:w-full after:origin-left after:scale-x-0 after:bg-[color-mix(in_srgb,var(--color-cobre),white_6%)] after:transition-transform after:duration-200 group-hover:after:scale-x-100 group-focus-visible:after:scale-x-100">
+                RideFare
+              </span>
+            </Link>
+            <p>Lectura pública de tarifas urbanas.</p>
           </div>
         </footer>
       </div>

@@ -87,8 +87,8 @@ export function HomeModules(): React.ReactElement {
               Escenarios
             </h3>
             <p className="max-w-md text-sm leading-7 text-[rgba(244,239,231,0.9)]">
-              Compara el modelo, interpreta variables clave y prueba simulaciones sin salir del
-              producto.
+              Compara variables clave, interpreta señales visibles y prueba simulaciones sin salir
+              del producto.
             </p>
           </div>
           <div className="border-t border-[rgba(244,239,231,0.12)] pt-4">

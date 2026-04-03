@@ -49,7 +49,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\validate-web.ps1
 
 ## Notes
 
-- The Python runtime is pinned to 3.13 because the current `dbt` toolchain is not stable on Python 3.14 in this repository
+- The Python runtime is pinned to `3.13` because the current `dbt` toolchain is not stable on Python `3.14` in this repository
+- If `ridefare transform` fails with a `mashumaro` or `dbt` import error, confirm that `.venv\Scripts\python --version` reports `3.13.x`
+- Prefer `powershell -ExecutionPolicy Bypass -File .\scripts\validate-python.ps1` or `.\.venv\Scripts\python.exe -m pytest`; a bare `pytest` command may still resolve to a global Python `3.14` interpreter on Windows
 - `scripts/bootstrap.ps1` creates `.venv` and installs `.[data,ml,dev]`
 - `ridefare ingest` expects raw files at `data/raw/PFDA_rides.csv` and `data/raw/PFDA_weather.csv` unless CLI overrides are provided
 - `ridefare transform` expects `data/interim/rides.parquet` and `data/interim/weather.parquet`
