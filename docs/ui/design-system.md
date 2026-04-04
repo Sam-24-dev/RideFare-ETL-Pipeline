@@ -9,6 +9,17 @@ RideFare uses an `Editorial Andino` direction for the public app:
 - Strong type contrast between narrative headlines and analytical body copy
 - Topographic texture and mobility-inspired separators as the visual anchor
 
+## Brand Surfaces
+
+- Browser identity uses an `RF` monogram designed for small-size legibility first
+- Social previews reuse the same palette and editorial rhythm as the public app
+- Screenshots for the portfolio README live under `docs/ui/screenshots/phase-6/`
+- The product should look coherent across:
+  - browser tab
+  - shared-link preview
+  - Vercel deployment cards
+  - README visuals
+
 ## Typography
 
 - Display: `Cormorant Garamond`

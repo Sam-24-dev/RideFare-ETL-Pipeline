@@ -2,41 +2,63 @@
 
 ## Purpose
 
-RideFare is being rebuilt as a layered data product rather than a notebook demo.
+RideFare is a finished hybrid portfolio project that combines:
 
-The target system combines:
-
-- a reproducible data pipeline
+- a reproducible analytics pipeline
 - a documented ML workflow
-- a public web product for storytelling and exploration
+- a deployed public web experience in Spanish
 
-## Layers
+The repository is no longer a notebook-centered demo. The operational system now lives in
+Python, `dbt`, and TypeScript.
 
-### 1. Data ingestion and contracts
+## Runtime Surfaces
 
-Raw ride and weather data will be ingested through Python modules under `src/ridefare`, validated with `Pandera`, and normalized before entering the analytics layer.
+### Data and warehouse
 
-### 2. Analytical modeling
+- `ridefare ingest` validates and normalizes raw ride and weather inputs
+- `ridefare transform` writes modeled tables into the local `DuckDB` warehouse and runs
+  `dbt build`
+- analytics and ML marts are exposed from the same reproducible warehouse path under
+  `data/processed/ridefare.duckdb`
 
-Cleaned datasets will be stored in `Parquet` and queried with `DuckDB`. `dbt` will model the warehouse into `staging`, `intermediate`, and `marts` layers.
+### Machine learning
 
-### 3. Machine learning
+- `ridefare train` reads `mart_model_features` and writes versioned ML runs under
+  `data/processed/ml/runs/<run_id>/`
+- the workflow exports holdout predictions, comparison metrics, feature importance, and SHAP
+  artifacts
+- `ridefare export-web` translates the latest run and the analytics mart into frontend-ready
+  JSON files
 
-The ML layer will consume modeled datasets, train baseline and primary models, and export explainability and evaluation artifacts.
+### Public web product
 
-### 4. Web product
+The public app in `apps/web` consumes static artifacts and exposes four routes:
 
-The public-facing application will consume static exports and present the project through a Spanish-language interface built with `Next.js`.
+- `/`
+- `/dashboard`
+- `/como-funciona`
+- `/escenarios`
 
-## Current Scope
+`Escenarios` is the public predictive surface and replaces the earlier `Model lab` concept.
 
-The current repository now includes:
+### Delivery
 
-- raw rides and weather CSV ingestion
-- `Pandera` contracts for input validation
-- clean `Parquet` outputs in `data/interim`
-- a local `DuckDB` warehouse file in `data/processed`
-- `dbt` marts for dashboard-ready and model-ready consumption
-- a repeatable ML workflow with temporal evaluation, SHAP explainability, and web exports
+- GitHub Actions validates Python and frontend paths
+- GitHub Actions refreshes versioned public artifacts
+- GitHub Actions orchestrates preview and production deploys
+- Vercel hosts the public application
 
-The public web product remains the next major phase.
+## System Flow
+
+1. Sample or raw CSV inputs enter the repo through `ridefare ingest`
+2. Cleaned outputs move into `Parquet`, `DuckDB`, and `dbt` marts through `ridefare transform`
+3. `ridefare train` creates explainable ML artifacts from `mart_model_features`
+4. `ridefare export-web` produces versioned public JSON subsets for analytics and scenarios
+5. The Next.js app renders the public experience from those artifacts
+6. GitHub Actions and Vercel deliver the final product
+
+## Repository State
+
+The current repository includes all roadmap phases from Foundation through Deployment and
+Automation. Phase 6 exists to polish presentation, tighten narrative consistency, and make the
+repo read like a deliberate portfolio product from README to browser tab.

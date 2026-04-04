@@ -1,81 +1,168 @@
 # RideFare
 
-RideFare is being rebuilt as a portfolio-grade data product that combines analytics
-engineering, machine learning, frontend delivery, and deployment automation.
+<div align="center">
 
-Phases `1` through `5` are implemented on the supported Python `3.13` toolchain.
-`Portfolio Polish` is the remaining roadmap phase after this branch.
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-dbt_%2B_Pandera-FFF000?style=for-the-badge&logo=duckdb&logoColor=111111)
+![XGBoost](https://img.shields.io/badge/ML-XGBoost_%2B_SHAP-1F6FEB?style=for-the-badge)
+![Next.js](https://img.shields.io/badge/Next.js-16-111111?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)
 
-## Project Direction
+<br>
 
-- Public UI: Spanish
-- Technical documentation: English
-- Data stack: `Polars`, `DuckDB`, `dbt`, `Pandera`
-- ML stack: `scikit-learn`, `XGBoost`, `SHAP`
-- Frontend stack: `Next.js`, `TypeScript`, `Tailwind CSS`, `shadcn/ui`, `Framer Motion`, `Apache ECharts`
-- Deployment target: `Vercel`
+<a href="https://ride-fare-etl-pipeline-web.vercel.app/">
+  <img src="https://img.shields.io/badge/Live_Demo-Open_RideFare-8C582E?style=for-the-badge&logo=vercel&logoColor=white" alt="Live demo badge" />
+</a>
 
-## Current Status
+</div>
 
-The legacy assets have been preserved as references while the new platform is being built:
+RideFare is a portfolio-grade pricing intelligence product that rebuilds a notebook-centered ride fare analysis into a reproducible data pipeline, a documented ML workflow, and a public Spanish-language web app. The repository shows how raw ride and weather files become validated marts, explainable model artifacts, and a deployed editorial interface for urban mobility storytelling.
 
-- Legacy notebook: [notebooks/ridefare_analysis_engineering_legacy.ipynb](./notebooks/ridefare_analysis_engineering_legacy.ipynb)
-- Legacy ETL script: [scripts/legacy/etl_db_legacy.py](./scripts/legacy/etl_db_legacy.py)
-- Legacy audit: [docs/architecture/legacy-audit.md](./docs/architecture/legacy-audit.md)
+## Project Overview
 
-## Data Platform Deliverables
+| Challenge | System | Outcome |
+|---|---|---|
+| Legacy analysis lived in a notebook and ad-hoc scripts | Rebuilt as Python commands, `DuckDB` + `dbt` marts, and typed frontend contracts | Reproducible pipeline from raw CSVs to deployed product |
+| Public pricing story needed to work without a live inference API | Versioned JSON exports feed a static-first `Next.js` experience | Stable previews, deterministic deploys, and transparent artifacts |
+| Model outputs had to be explainable enough for portfolio storytelling | Temporal evaluation, SHAP exports, and a bounded scenario simulator | ML behavior is visible in docs, artifacts, and the public UI |
 
-- `ridefare ingest` command that validates raw CSV inputs and writes clean `Parquet` outputs
-- `ridefare transform` command that loads prepared raw tables into `DuckDB` and runs `dbt build`
-- `dbt` models for `staging`, `intermediate`, and `marts`
-- Versioned sample raw inputs under `data/samples/raw`
-- Data contracts and quality rules documented in `docs/data/`
+## Public Product
 
-## ML System Deliverables
+RideFare ships four public routes:
 
-- `ridefare train` command that reads `mart_model_features` and writes versioned ML runs
-- baseline models with deterministic comparison against the primary `XGBoost` model
-- temporal evaluation outputs, holdout predictions, feature importance, and SHAP artifacts
-- `ridefare export-web` command that writes frontend-ready JSON files under
-  `data/processed/ml/web` and `data/processed/analytics/web`
-- model documentation in `docs/ml/`
+- `/` introduces the project as an editorial analytics product
+- `/dashboard` turns the analytics mart into a public pricing intelligence surface
+- `/como-funciona` translates the pipeline and ML workflow into reader-friendly narrative
+- `/escenarios` exposes the exported simulator artifacts through an explainable scenario lab
 
-## Web Product Deliverables
+<div align="center">
+  <img src="./docs/ui/screenshots/phase-6/home-desktop.png" alt="RideFare home page" width="100%" />
+</div>
 
-- Spanish public routes for `/`, `/dashboard`, `/como-funciona`, and `/escenarios`
-- typed frontend data loaders backed by exported JSON artifacts and runtime `zod` validation
-- editorial analytics dashboard with ECharts visualizations and client-side filters
-- public `/como-funciona` page that translates pipeline and ML decisions into portfolio-ready copy
-- public `/escenarios` page driven by exported artifacts and a scenario simulator
-- `Escenarios` formally replaces the earlier `Model lab` concept as the public predictive surface
-- visual system documented in `docs/ui/design-system.md`
+<table>
+  <tr>
+    <td><img src="./docs/ui/screenshots/phase-6/dashboard-desktop.png" alt="RideFare dashboard" width="100%" /></td>
+    <td><img src="./docs/ui/screenshots/phase-6/escenarios-desktop.png" alt="RideFare scenarios page" width="100%" /></td>
+  </tr>
+</table>
 
-## Deployment and Automation Deliverables
+## Architecture Overview
 
-- GitHub Actions workflows for CI, public artifact refresh, Vercel preview deploys,
-  Vercel production deploys, and release automation
-- versioned public frontend artifacts under:
+```mermaid
+flowchart LR
+    A[Sample ride and weather CSVs] --> B[ridefare ingest]
+    B --> C[Validated interim Parquet]
+    C --> D[ridefare transform]
+    D --> E[DuckDB warehouse]
+    E --> F[dbt marts]
+    F --> G[ridefare train]
+    G --> H[Versioned ML runs]
+    H --> I[SHAP, metrics, holdout outputs]
+    F --> J[ridefare export-web]
+    I --> J
+    J --> K[Versioned public JSON artifacts]
+    K --> L[Next.js public app]
+    L --> M[Vercel]
+```
+
+## Technical Stack
+
+| Layer | Stack | Role |
+|---|---|---|
+| Data ingestion | `Python`, `Polars`, `Pandera` | validate, normalize, and store clean ride/weather inputs |
+| Analytics modeling | `DuckDB`, `dbt`, `Parquet` | build stable marts for analytics and ML consumption |
+| Machine learning | `scikit-learn`, `XGBoost`, `SHAP` | temporal evaluation, baseline comparison, explainability, and exports |
+| Web product | `Next.js`, `TypeScript`, `Tailwind CSS`, `Framer Motion`, `Apache ECharts` | deliver the public Spanish-language interface |
+| Automation | `pytest`, `Ruff`, `GitHub Actions`, `release-please`, `Vercel` | validate, refresh artifacts, deploy previews/production, and manage releases |
+
+## Operational Interfaces
+
+The implementation converges on these repo-level interfaces:
+
+- `ridefare ingest`
+- `ridefare transform`
+- `ridefare train`
+- `ridefare export-web`
+- `scripts/refresh-public-artifacts.ps1`
+- versioned public artifacts under:
   - `data/processed/analytics/web`
   - `data/processed/ml/web`
-- a single refresh entrypoint at `scripts/refresh-public-artifacts.ps1`
-- deployment and release runbooks under `docs/runbooks/`
-- Vercel as the public deploy target with GitHub Actions as the explicit deploy orchestrator
 
-## Python Compatibility
+## Quick Start
 
-- The supported local runtime is `Python 3.13`
-- `pyproject.toml` is pinned to `>=3.12,<3.14`
-- `dbt` in this repository is not stable on Python `3.14`, so local pipeline validation must run inside the `3.13` virtual environment created by `scripts/bootstrap.ps1`
-- On Windows, prefer `scripts/validate-python.ps1` or `.\.venv\Scripts\python.exe -m pytest`; a bare `pytest` command may still resolve to a global Python `3.14` installation
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\refresh-public-artifacts.ps1 -RunId local-demo
+powershell -ExecutionPolicy Bypass -File .\scripts\validate-python.ps1
+corepack pnpm --filter web dev
+```
 
-## Working Agreement
+If you want to run the pipeline step by step instead of the refresh wrapper:
 
-- The notebook is not the source of truth
-- Production logic must live in Python, SQL/dbt, and TypeScript
-- Public UI stays in Spanish while technical documentation stays in English
+```powershell
+ridefare ingest --rides-path data/samples/raw/PFDA_rides.csv --weather-path data/samples/raw/PFDA_weather.csv
+ridefare transform
+ridefare train --run-id local-demo
+ridefare export-web --run-id local-demo
+```
 
-## Local Development
+## Automation and Deployment
 
-Detailed local setup lives in [docs/runbooks/local-development.md](./docs/runbooks/local-development.md).
-Deployment details live in [docs/runbooks/deployment.md](./docs/runbooks/deployment.md).
-Release automation details live in [docs/runbooks/release-process.md](./docs/runbooks/release-process.md).
+- `ci.yml` validates Python, regenerates public artifacts in workspace, and verifies the web build against those exports
+- `pipeline-refresh.yml` refreshes the public JSON subsets when backend or sample data changes reach `master`
+- `vercel-preview.yml` publishes preview deployments for pull requests
+- `vercel-production.yml` deploys the production site from `master`
+- `release-please.yml` manages release PRs and changelog automation
+
+Operational details live in:
+
+- [docs/runbooks/local-development.md](./docs/runbooks/local-development.md)
+- [docs/runbooks/deployment.md](./docs/runbooks/deployment.md)
+- [docs/runbooks/release-process.md](./docs/runbooks/release-process.md)
+
+## Repository Structure
+
+```text
+RideFare/
+|- apps/web/                     # Public product in Spanish
+|- src/ridefare/                 # Production Python package
+|- dbt/                          # Analytics and ML marts
+|- data/                         # Raw, interim, processed, and sample zones
+|- docs/                         # Architecture, ML, UI, ADRs, and runbooks
+|- tests/                        # Unit and integration coverage
+|- scripts/                      # Bootstrap, validation, and artifact refresh helpers
+`- .github/workflows/            # CI, refresh, deploy, and release automation
+```
+
+## Limitations and Non-Goals
+
+- RideFare is not an online inference service
+- the public simulator consumes exported artifacts, not live backend predictions
+- the current sample data is intentionally small for reproducible portfolio execution
+- auth, user accounts, and stateful product features remain out of scope
+- the legacy notebook is preserved only as reference material, not as the operational center
+
+<div align="center">
+
+### Author
+
+**Samir Caizapasto**<br />
+*Junior Data Engineer & Analyst*
+
+<div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 10px;">
+  <a href="https://portafolio-samir-tau.vercel.app/">
+    <img src="https://img.shields.io/badge/Portfolio-Visit_Website-success?style=for-the-badge&logo=vercel&logoColor=white" alt="Portfolio badge" />
+  </a>
+  <a href="https://www.linkedin.com/in/samir-caizapasto/">
+    <img src="https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn badge" />
+  </a>
+  <a href="mailto:samir.leonardo.caizapasto04@gmail.com">
+    <img src="https://img.shields.io/badge/Email-Contact_Me-EA4335?style=for-the-badge&logo=gmail&logoColor=white" alt="Email badge" />
+  </a>
+</div>
+
+</div>
+
+---
+
+If you find this project useful, please consider giving the repository a star.
