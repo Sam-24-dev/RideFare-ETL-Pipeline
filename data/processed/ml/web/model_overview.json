@@ -1,0 +1,29 @@
+{
+  "champion_model": "dummy_mean",
+  "development_rows": 3,
+  "explainability_model": "xgboost",
+  "feature_columns": [
+    "distance",
+    "surge_multiplier",
+    "temp",
+    "clouds",
+    "pressure",
+    "rain",
+    "humidity",
+    "wind",
+    "ride_hour_of_day",
+    "ride_day_of_week",
+    "source",
+    "destination",
+    "cab_type",
+    "ride_name"
+  ],
+  "generated_at": "2026-04-04T02:55:18.133902+00:00",
+  "holdout_rows": 1,
+  "row_count": 4,
+  "run_id": "refresh-public",
+  "time_range": {
+    "max": "2024-03-31T14:00:00",
+    "min": "2024-03-31T12:00:00"
+  }
+}

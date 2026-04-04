@@ -1,0 +1,16 @@
+[
+  {
+    "actual": 10.8,
+    "cab_type": "Lyft",
+    "destination": "North End",
+    "distance": 1.9,
+    "model_name": "dummy_mean",
+    "predicted": 18.233333333333334,
+    "residual": -7.433333333333334,
+    "ride_hour": "2024-03-31T14:00:00",
+    "ride_id": 4,
+    "ride_name": "Lyft",
+    "source": "Beacon Hill",
+    "surge_multiplier": 1.0
+  }
+]

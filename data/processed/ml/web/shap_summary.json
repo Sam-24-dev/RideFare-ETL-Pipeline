@@ -1,0 +1,106 @@
+{
+  "global_importance": [
+    {
+      "feature": "numeric__distance",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__surge_multiplier",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__temp",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__clouds",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__pressure",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__rain",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__humidity",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__wind",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__ride_hour_of_day",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "numeric__ride_day_of_week",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__source_Beacon Hill",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__source_North End",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__destination_Back Bay",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__destination_Financial District",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__cab_type_Lyft",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__cab_type_Uber",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__ride_name_Lyft XL",
+      "mean_abs_shap": 0.0
+    },
+    {
+      "feature": "categorical__ride_name_UberX",
+      "mean_abs_shap": 0.0
+    }
+  ],
+  "model_name": "xgboost",
+  "samples": [
+    {
+      "base_value": 18.350000381469727,
+      "ride_hour": "2024-03-31T14:00:00",
+      "ride_id": 4,
+      "top_contributions": [
+        {
+          "feature": "numeric__distance",
+          "shap_value": 0.0
+        },
+        {
+          "feature": "numeric__surge_multiplier",
+          "shap_value": 0.0
+        },
+        {
+          "feature": "numeric__temp",
+          "shap_value": 0.0
+        },
+        {
+          "feature": "numeric__clouds",
+          "shap_value": 0.0
+        },
+        {
+          "feature": "numeric__pressure",
+          "shap_value": 0.0
+        }
+      ]
+    }
+  ]
+}

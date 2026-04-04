@@ -1,0 +1,38 @@
+{
+  "dimensions": {
+    "cab_types": 2,
+    "destinations": 4,
+    "sources": 2
+  },
+  "generated_at": "2026-04-04T02:55:36.464338+00:00",
+  "kpis": [
+    {
+      "format": "integer",
+      "id": "total_rides",
+      "label": "Viajes modelados",
+      "value": 4
+    },
+    {
+      "format": "currency",
+      "id": "avg_price",
+      "label": "Tarifa media",
+      "value": 16.375
+    },
+    {
+      "format": "multiplier",
+      "id": "avg_surge_multiplier",
+      "label": "Surge medio",
+      "value": 1.1875
+    },
+    {
+      "format": "text",
+      "id": "dominant_route",
+      "label": "Ruta más activa",
+      "value": "Beacon Hill → Financial District"
+    }
+  ],
+  "time_range": {
+    "max": "2024-03-31T14:00:00",
+    "min": "2024-03-31T12:00:00"
+  }
+}

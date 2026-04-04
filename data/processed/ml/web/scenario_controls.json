@@ -1,0 +1,196 @@
+{
+  "cab_types": [
+    "Lyft",
+    "Uber"
+  ],
+  "default_day_of_week": 0,
+  "destinations_by_source": {
+    "Beacon Hill": [
+      "Financial District",
+      "North End"
+    ],
+    "North End": [
+      "Back Bay",
+      "South Station"
+    ]
+  },
+  "distance_factors": [
+    {
+      "factor": 0.85,
+      "id": "compacta",
+      "label": "Compacta"
+    },
+    {
+      "factor": 1.0,
+      "id": "referencia",
+      "label": "Referencia"
+    },
+    {
+      "factor": 1.15,
+      "id": "extendida",
+      "label": "Extendida"
+    }
+  ],
+  "generated_at": "2026-04-04T02:55:36.455124+00:00",
+  "model_name": "xgboost",
+  "route_catalog": [
+    {
+      "base_price": 10.8,
+      "cab_type": "Lyft",
+      "destination": "North End",
+      "median_distance": 1.9,
+      "ride_name": "Lyft",
+      "route_volatility": 10.48,
+      "source": "Beacon Hill",
+      "total_rides": 1
+    },
+    {
+      "base_price": 12.5,
+      "cab_type": "Uber",
+      "destination": "Back Bay",
+      "median_distance": 2.1,
+      "ride_name": "UberX",
+      "route_volatility": 8.78,
+      "source": "North End",
+      "total_rides": 1
+    },
+    {
+      "base_price": 18.0,
+      "cab_type": "Uber",
+      "destination": "South Station",
+      "median_distance": 3.4,
+      "ride_name": "Uber Comfort",
+      "route_volatility": 8.78,
+      "source": "North End",
+      "total_rides": 1
+    },
+    {
+      "base_price": 24.2,
+      "cab_type": "Lyft",
+      "destination": "Financial District",
+      "median_distance": 5.8,
+      "ride_name": "Lyft XL",
+      "route_volatility": 14.98,
+      "source": "Beacon Hill",
+      "total_rides": 1
+    }
+  ],
+  "simulator_mode": "hybrid_fallback",
+  "sources": [
+    "Beacon Hill",
+    "North End"
+  ],
+  "surge_levels": [
+    1.0,
+    1.25,
+    1.5
+  ],
+  "time_blocks": [
+    {
+      "anchor_hour": 3,
+      "hours": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "id": "madrugada",
+      "label": "Madrugada"
+    },
+    {
+      "anchor_hour": 9,
+      "hours": [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "id": "manana",
+      "label": "Mañana"
+    },
+    {
+      "anchor_hour": 15,
+      "hours": [
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "id": "tarde",
+      "label": "Tarde"
+    },
+    {
+      "anchor_hour": 21,
+      "hours": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "id": "noche",
+      "label": "Noche"
+    }
+  ],
+  "weather_profiles": [
+    {
+      "description": "Menos nubosidad y humedad, con lluvia casi nula.",
+      "id": "despejado",
+      "label": "Despejado",
+      "values": {
+        "clouds": 36.25,
+        "humidity": 57.25,
+        "pressure": 1010.0,
+        "rain": 0.0,
+        "temp": 48.5,
+        "wind": 9.75
+      }
+    },
+    {
+      "description": "Cobertura de nubes alta, con el resto de condiciones cercanas al promedio.",
+      "id": "nublado",
+      "label": "Nublado",
+      "values": {
+        "clouds": 66.25,
+        "humidity": 59.0,
+        "pressure": 1010.0,
+        "rain": 0.05,
+        "temp": 48.5,
+        "wind": 9.75
+      }
+    },
+    {
+      "description": "Mayor intensidad de lluvia y humedad.",
+      "id": "lluvia",
+      "label": "Lluvia",
+      "values": {
+        "clouds": 66.25,
+        "humidity": 60.5,
+        "pressure": 1010.0,
+        "rain": 0.125,
+        "temp": 46.5,
+        "wind": 9.75
+      }
+    },
+    {
+      "description": "Condiciones con mayor intensidad de viento.",
+      "id": "ventoso",
+      "label": "Ventoso",
+      "values": {
+        "clouds": 52.5,
+        "humidity": 59.0,
+        "pressure": 1010.0,
+        "rain": 0.05,
+        "temp": 48.5,
+        "wind": 10.6
+      }
+    }
+  ]
+}

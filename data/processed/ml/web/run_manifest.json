@@ -1,0 +1,60 @@
+{
+  "champion_model": "dummy_mean",
+  "dataset": {
+    "feature_columns": [
+      "distance",
+      "surge_multiplier",
+      "temp",
+      "clouds",
+      "pressure",
+      "rain",
+      "humidity",
+      "wind",
+      "ride_hour_of_day",
+      "ride_day_of_week",
+      "source",
+      "destination",
+      "cab_type",
+      "ride_name"
+    ],
+    "null_counts": {
+      "cab_type": 0,
+      "clouds": 0,
+      "destination": 0,
+      "distance": 0,
+      "humidity": 0,
+      "pressure": 0,
+      "price": 0,
+      "rain": 0,
+      "ride_day_of_week": 0,
+      "ride_hour": 0,
+      "ride_hour_of_day": 0,
+      "ride_id": 0,
+      "ride_name": 0,
+      "source": 0,
+      "surge_multiplier": 0,
+      "temp": 0,
+      "wind": 0
+    },
+    "row_count": 4,
+    "time_range": {
+      "max": "2024-03-31T14:00:00",
+      "min": "2024-03-31T12:00:00"
+    }
+  },
+  "explainability_model": "xgboost",
+  "generated_at": "2026-04-04T02:55:18.133902+00:00",
+  "run_id": "refresh-public",
+  "source": {
+    "dataset_fingerprint": "024c82f285eb12d7016e8fc05e12a230e7047e85cd000e9e1509b0cf6da0229d",
+    "duckdb_path": "C:/Users/USER/Documents/GitHub/RideFare-phase5/data/processed/ridefare.duckdb",
+    "model_source": "mart_model_features"
+  },
+  "split_plan": {
+    "cv_splits_requested": 4,
+    "cv_splits_used": 2,
+    "development_rows": 3,
+    "holdout_rows": 1,
+    "validation_rows": 1
+  }
+}

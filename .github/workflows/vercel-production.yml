@@ -1,0 +1,82 @@
+name: vercel-production
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "data/processed/analytics/web/**"
+      - "data/processed/ml/web/**"
+      - "docs/**"
+      - "README.md"
+
+permissions:
+  contents: read
+
+jobs:
+  production-deploy:
+    runs-on: ubuntu-latest
+    env:
+      RIDEFARE_PROJECT_ROOT: ${{ github.workspace }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required Vercel secrets
+        shell: bash
+        run: |
+          test -n "$VERCEL_TOKEN"
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[data,ml,dev]
+
+      - name: Refresh public artifacts
+        shell: pwsh
+        run: ./scripts/refresh-public-artifacts.ps1 -RunId production-${{ github.run_number }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel environment
+        working-directory: apps/web
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build production bundle
+        working-directory: apps/web
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy production
+        id: deploy
+        working-directory: apps/web
+        shell: bash
+        run: |
+          url="$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")"
+          echo "production_url=$url" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Vercel production"
+            echo
+            echo "$url"
+          } >> "$GITHUB_STEP_SUMMARY"

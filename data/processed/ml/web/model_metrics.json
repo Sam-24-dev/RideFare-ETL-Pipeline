@@ -1,0 +1,54 @@
+[
+  {
+    "cross_validation": {
+      "mae": 6.025,
+      "r2": 0.0,
+      "rmse": 6.025
+    },
+    "holdout": {
+      "mae": 7.433333333333334,
+      "r2": 0.0,
+      "rmse": 7.433333333333334
+    },
+    "model_name": "dummy_mean"
+  },
+  {
+    "cross_validation": {
+      "mae": 6.025000190734863,
+      "r2": 0.0,
+      "rmse": 6.025000190734863
+    },
+    "holdout": {
+      "mae": 7.550000381469726,
+      "r2": 0.0,
+      "rmse": 7.550000381469726
+    },
+    "model_name": "xgboost"
+  },
+  {
+    "cross_validation": {
+      "mae": 5.9675000000000225,
+      "r2": 0.0,
+      "rmse": 5.9675000000000225
+    },
+    "holdout": {
+      "mae": 8.609999999999953,
+      "r2": 0.0,
+      "rmse": 8.609999999999953
+    },
+    "model_name": "random_forest"
+  },
+  {
+    "cross_validation": {
+      "mae": 16.466443188883787,
+      "r2": 0.0,
+      "rmse": 16.466443188883787
+    },
+    "holdout": {
+      "mae": 11.323096289515345,
+      "r2": 0.0,
+      "rmse": 11.323096289515345
+    },
+    "model_name": "linear_regression"
+  }
+]
