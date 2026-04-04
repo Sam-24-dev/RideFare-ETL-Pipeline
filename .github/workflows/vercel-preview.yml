@@ -56,19 +56,16 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
 
       - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+        run: npm install --global vercel@50.39.0
 
       - name: Pull Vercel environment
-        working-directory: apps/web
         run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
 
       - name: Build preview bundle
-        working-directory: apps/web
         run: vercel build --token="$VERCEL_TOKEN"
 
       - name: Deploy preview
         id: deploy
-        working-directory: apps/web
         shell: bash
         run: |
           url="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"

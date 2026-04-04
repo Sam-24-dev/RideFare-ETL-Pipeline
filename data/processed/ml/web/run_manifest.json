@@ -43,11 +43,11 @@
     }
   },
   "explainability_model": "xgboost",
-  "generated_at": "2026-04-04T02:55:18.133902+00:00",
+  "generated_at": "2026-04-04T04:40:47.809313+00:00",
   "run_id": "refresh-public",
   "source": {
     "dataset_fingerprint": "024c82f285eb12d7016e8fc05e12a230e7047e85cd000e9e1509b0cf6da0229d",
-    "duckdb_path": "C:/Users/USER/Documents/GitHub/RideFare-phase5/data/processed/ridefare.duckdb",
+    "duckdb_path": "data/processed/ridefare.duckdb",
     "model_source": "mart_model_features"
   },
   "split_plan": {

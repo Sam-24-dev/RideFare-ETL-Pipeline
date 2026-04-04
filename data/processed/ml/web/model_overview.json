@@ -18,7 +18,7 @@
     "cab_type",
     "ride_name"
   ],
-  "generated_at": "2026-04-04T02:55:18.133902+00:00",
+  "generated_at": "2026-04-04T04:40:47.809313+00:00",
   "holdout_rows": 1,
   "row_count": 4,
   "run_id": "refresh-public",

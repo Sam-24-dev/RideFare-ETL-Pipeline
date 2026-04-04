@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -98,3 +99,38 @@ def test_make_json_safe_converts_numpy_scalars_and_non_finite_values() -> None:
     assert safe_payload["value"] == 1.25
     assert safe_payload["missing"] is None
     assert safe_payload["nested"] == [4, 2.5]
+
+
+def test_build_run_manifest_uses_repo_relative_duckdb_path() -> None:
+    from ridefare.config import RideFarePaths
+    from ridefare.ml_training import SplitPlan, build_run_manifest
+
+    project_root = (Path("tmp") / "ridefare").resolve()
+    config = RideFarePaths.defaults(project_root=project_root).train_config(run_id="unit-run")
+    dataset = SimpleNamespace(
+        metadata=SimpleNamespace(
+            fingerprint="abc123",
+            row_count=4,
+            null_counts={"price": 0},
+            time_range={"min": "2024-03-31T12:00:00", "max": "2024-03-31T14:00:00"},
+            feature_columns=["distance", "surge_multiplier"],
+        )
+    )
+    split_plan = SplitPlan(
+        total_rows=4,
+        holdout_rows=1,
+        development_rows=3,
+        holdout_start_index=3,
+        cv_splits_requested=4,
+        cv_splits_used=2,
+        validation_rows=1,
+    )
+
+    manifest = build_run_manifest(
+        config=config,
+        dataset=dataset,
+        split_plan=split_plan,
+        comparison={"champion_model": "dummy_mean"},
+    )
+
+    assert manifest["source"]["duckdb_path"] == "data/processed/ridefare.duckdb"
