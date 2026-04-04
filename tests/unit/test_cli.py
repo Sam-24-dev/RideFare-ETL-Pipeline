@@ -10,7 +10,8 @@ import pytest
 def test_package_exposes_version() -> None:
     from ridefare import __version__
 
-    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    repo_root = Path(__file__).resolve().parents[2]
+    pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
     assert __version__ == pyproject["project"]["version"]
 
 
