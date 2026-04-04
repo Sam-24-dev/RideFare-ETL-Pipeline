@@ -67,3 +67,5 @@ repository root during `vercel build`.
    - `/como-funciona`
    - `Escenarios`
 4. Confirm the app reads the expected artifacts without missing-state banners
+5. Confirm the browser tab title and icon match the final RideFare branding
+6. Confirm the shared preview metadata is present for Open Graph and Twitter cards

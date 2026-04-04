@@ -91,3 +91,13 @@ The champion model is selected by lowest holdout `RMSE`, with deterministic tie-
 ## Responsible Use Note
 
 This project estimates observed historical prices. It should not be presented as a source of guaranteed future fares, fairness claims, or rider-level decision support without additional validation and governance.
+
+## Public Product Surface
+
+RideFare exposes the ML layer to the public app through exported artifacts rather than a live
+inference API.
+
+- `/dashboard` consumes analytics artifacts for descriptive pricing stories
+- `/escenarios` consumes ML-oriented exports for the public scenario simulator
+- when the direct exported scenario grid is too flat for a public reading, the simulator can fall
+  back to the bounded hybrid export mode documented in `docs/ml/evaluation-protocol.md`

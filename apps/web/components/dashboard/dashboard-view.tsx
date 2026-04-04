@@ -641,15 +641,15 @@ export function DashboardView({ payload }: DashboardViewProps): React.ReactEleme
                   {editorialNote.quote}
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  <HomeActionLink href="/escenarios" className="rounded-none px-5 py-3">
-                    Ver escenarios
-                  </HomeActionLink>
                   <HomeActionLink
                     href="/como-funciona"
                     variant="secondary"
                     className="rounded-none px-5 py-3"
                   >
                     Cómo funciona
+                  </HomeActionLink>
+                  <HomeActionLink href="/escenarios" className="rounded-none px-5 py-3">
+                    Ver escenarios
                   </HomeActionLink>
                 </div>
               </div>
