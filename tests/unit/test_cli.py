@@ -1,6 +1,7 @@
 import argparse
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,9 @@ import pytest
 def test_package_exposes_version() -> None:
     from ridefare import __version__
 
-    assert __version__ == "0.1.0"
+    repo_root = Path(__file__).resolve().parents[2]
+    pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert __version__ == pyproject["project"]["version"]
 
 
 def test_build_parser_registers_foundation_commands() -> None:
