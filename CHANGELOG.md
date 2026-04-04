@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/Sam-24-dev/RideFare-ETL-Pipeline/compare/ridefare-v0.2.0...ridefare-v0.2.1) (2026-04-04)
+
+
+### Bug Fixes
+
+* keep version test aligned with releases ([#7](https://github.com/Sam-24-dev/RideFare-ETL-Pipeline/issues/7)) ([a4a0098](https://github.com/Sam-24-dev/RideFare-ETL-Pipeline/commit/a4a009875cd30c4f7f92a5dcb4118c462775f276))
+
 ## [0.2.0](https://github.com/Sam-24-dev/RideFare-ETL-Pipeline/compare/ridefare-v0.1.0...ridefare-v0.2.0) (2026-04-04)
 
 
