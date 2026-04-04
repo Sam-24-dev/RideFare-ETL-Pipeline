@@ -1,0 +1,74 @@
+[
+  {
+    "feature": "numeric__distance",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__surge_multiplier",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__temp",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__clouds",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__pressure",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__rain",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__humidity",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__wind",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__ride_hour_of_day",
+    "importance": 0.0
+  },
+  {
+    "feature": "numeric__ride_day_of_week",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__source_Beacon Hill",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__source_North End",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__destination_Back Bay",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__destination_Financial District",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__cab_type_Lyft",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__cab_type_Uber",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__ride_name_Lyft XL",
+    "importance": 0.0
+  },
+  {
+    "feature": "categorical__ride_name_UberX",
+    "importance": 0.0
+  }
+]

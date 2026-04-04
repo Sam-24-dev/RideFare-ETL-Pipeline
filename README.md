@@ -1,10 +1,10 @@
 # RideFare
 
 RideFare is being rebuilt as a portfolio-grade data product that combines analytics
-engineering, machine learning, and product-focused frontend delivery.
+engineering, machine learning, frontend delivery, and deployment automation.
 
-Phases `1` through `4` are implemented on the supported Python `3.13` toolchain.
-`Deployment and Automation` plus final portfolio polish remain after this branch.
+Phases `1` through `5` are implemented on the supported Python `3.13` toolchain.
+`Portfolio Polish` is the remaining roadmap phase after this branch.
 
 ## Project Direction
 
@@ -50,6 +50,17 @@ The legacy assets have been preserved as references while the new platform is be
 - `Escenarios` formally replaces the earlier `Model lab` concept as the public predictive surface
 - visual system documented in `docs/ui/design-system.md`
 
+## Deployment and Automation Deliverables
+
+- GitHub Actions workflows for CI, public artifact refresh, Vercel preview deploys,
+  Vercel production deploys, and release automation
+- versioned public frontend artifacts under:
+  - `data/processed/analytics/web`
+  - `data/processed/ml/web`
+- a single refresh entrypoint at `scripts/refresh-public-artifacts.ps1`
+- deployment and release runbooks under `docs/runbooks/`
+- Vercel as the public deploy target with GitHub Actions as the explicit deploy orchestrator
+
 ## Python Compatibility
 
 - The supported local runtime is `Python 3.13`
@@ -66,3 +77,5 @@ The legacy assets have been preserved as references while the new platform is be
 ## Local Development
 
 Detailed local setup lives in [docs/runbooks/local-development.md](./docs/runbooks/local-development.md).
+Deployment details live in [docs/runbooks/deployment.md](./docs/runbooks/deployment.md).
+Release automation details live in [docs/runbooks/release-process.md](./docs/runbooks/release-process.md).

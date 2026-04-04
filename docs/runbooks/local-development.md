@@ -2,7 +2,8 @@
 
 ## Purpose
 
-This runbook describes the expected developer setup after the `Web Product` phase.
+This runbook describes the expected developer setup after the `Deployment and Automation`
+phase.
 
 ## Prerequisites
 
@@ -27,10 +28,7 @@ corepack pnpm install
 ### Generate sample public artifacts
 
 ```powershell
-.\.venv\Scripts\python -m ridefare ingest --rides-path data/samples/raw/PFDA_rides.csv --weather-path data/samples/raw/PFDA_weather.csv
-.\.venv\Scripts\python -m ridefare transform
-.\.venv\Scripts\python -m ridefare train --run-id local-web
-.\.venv\Scripts\python -m ridefare export-web --run-id local-web
+powershell -ExecutionPolicy Bypass -File .\scripts\refresh-public-artifacts.ps1 -RunId local-web
 ```
 
 ## Validation
@@ -53,10 +51,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\validate-web.ps1
 - If `ridefare transform` fails with a `mashumaro` or `dbt` import error, confirm that `.venv\Scripts\python --version` reports `3.13.x`
 - Prefer `powershell -ExecutionPolicy Bypass -File .\scripts\validate-python.ps1` or `.\.venv\Scripts\python.exe -m pytest`; a bare `pytest` command may still resolve to a global Python `3.14` interpreter on Windows
 - `scripts/bootstrap.ps1` creates `.venv` and installs `.[data,ml,dev]`
+- `scripts/refresh-public-artifacts.ps1` is the canonical local entrypoint for rebuilding
+  the public JSON artifacts consumed by the web app
 - `ridefare ingest` expects raw files at `data/raw/PFDA_rides.csv` and `data/raw/PFDA_weather.csv` unless CLI overrides are provided
 - `ridefare transform` expects `data/interim/rides.parquet` and `data/interim/weather.parquet`
 - `ridefare train` expects `mart_model_features` to exist in the local DuckDB warehouse
 - `ridefare export-web` reads the latest successful ML run by default
 - `ridefare export-web` now also writes dashboard artifacts under `data/processed/analytics/web`
 - The public app reads generated JSON from the filesystem; it does not call an API at runtime
+- The public JSON subsets under `data/processed/analytics/web` and `data/processed/ml/web`
+  are versioned in git
 - The public UI language will be Spanish, but technical docs remain in English

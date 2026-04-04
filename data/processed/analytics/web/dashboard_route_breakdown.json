@@ -1,0 +1,38 @@
+[
+  {
+    "avg_distance": 5.8,
+    "avg_price": 24.2,
+    "avg_surge_multiplier": 1.25,
+    "cab_type": "Lyft",
+    "destination": "Financial District",
+    "source": "Beacon Hill",
+    "total_rides": 1.0
+  },
+  {
+    "avg_distance": 3.4,
+    "avg_price": 18.0,
+    "avg_surge_multiplier": 1.5,
+    "cab_type": "Uber",
+    "destination": "South Station",
+    "source": "North End",
+    "total_rides": 1.0
+  },
+  {
+    "avg_distance": 2.1,
+    "avg_price": 12.5,
+    "avg_surge_multiplier": 1.0,
+    "cab_type": "Uber",
+    "destination": "Back Bay",
+    "source": "North End",
+    "total_rides": 1.0
+  },
+  {
+    "avg_distance": 1.9,
+    "avg_price": 10.8,
+    "avg_surge_multiplier": 1.0,
+    "cab_type": "Lyft",
+    "destination": "North End",
+    "source": "Beacon Hill",
+    "total_rides": 1.0
+  }
+]

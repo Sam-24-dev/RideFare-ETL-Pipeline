@@ -448,7 +448,10 @@ def build_run_manifest(
         "run_id": config.run_id,
         "generated_at": datetime.now(tz=UTC),
         "source": {
-            "duckdb_path": config.duckdb_path,
+            "duckdb_path": _public_source_path(
+                config.duckdb_path,
+                project_root=config.project_root,
+            ),
             "model_source": "mart_model_features",
             "dataset_fingerprint": dataset.metadata.fingerprint,
         },
@@ -468,6 +471,15 @@ def build_run_manifest(
         "champion_model": comparison["champion_model"],
         "explainability_model": "xgboost",
     }
+
+
+def _public_source_path(path: Path, *, project_root: Path) -> str:
+    """Normalize local paths before exporting public-facing artifacts."""
+
+    try:
+        return path.relative_to(project_root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def build_feature_importance_payload(xgboost_outcome: ModelOutcome) -> dict[str, object]:

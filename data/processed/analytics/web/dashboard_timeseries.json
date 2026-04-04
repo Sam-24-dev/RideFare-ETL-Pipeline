@@ -1,0 +1,42 @@
+[
+  {
+    "avg_price": 24.2,
+    "avg_surge_multiplier": 1.25,
+    "cab_type": "Lyft",
+    "destination": "Financial District",
+    "ride_date": "2024-03-31T00:00:00",
+    "ride_hour": "2024-03-31T12:00:00",
+    "source": "Beacon Hill",
+    "total_rides": 1
+  },
+  {
+    "avg_price": 12.5,
+    "avg_surge_multiplier": 1.0,
+    "cab_type": "Uber",
+    "destination": "Back Bay",
+    "ride_date": "2024-03-31T00:00:00",
+    "ride_hour": "2024-03-31T12:00:00",
+    "source": "North End",
+    "total_rides": 1
+  },
+  {
+    "avg_price": 18.0,
+    "avg_surge_multiplier": 1.5,
+    "cab_type": "Uber",
+    "destination": "South Station",
+    "ride_date": "2024-03-31T00:00:00",
+    "ride_hour": "2024-03-31T13:00:00",
+    "source": "North End",
+    "total_rides": 1
+  },
+  {
+    "avg_price": 10.8,
+    "avg_surge_multiplier": 1.0,
+    "cab_type": "Lyft",
+    "destination": "North End",
+    "ride_date": "2024-03-31T00:00:00",
+    "ride_hour": "2024-03-31T14:00:00",
+    "source": "Beacon Hill",
+    "total_rides": 1
+  }
+]

@@ -1,0 +1,70 @@
+{
+  "cab_types": [
+    "Lyft",
+    "Uber"
+  ],
+  "destinations": [
+    "Back Bay",
+    "Financial District",
+    "North End",
+    "South Station"
+  ],
+  "sources": [
+    "Beacon Hill",
+    "North End"
+  ],
+  "time_windows": [
+    {
+      "anchor_hour": 3,
+      "hours": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "id": "madrugada",
+      "label": "Madrugada"
+    },
+    {
+      "anchor_hour": 9,
+      "hours": [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "id": "manana",
+      "label": "Mañana"
+    },
+    {
+      "anchor_hour": 15,
+      "hours": [
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "id": "tarde",
+      "label": "Tarde"
+    },
+    {
+      "anchor_hour": 21,
+      "hours": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "id": "noche",
+      "label": "Noche"
+    }
+  ]
+}
