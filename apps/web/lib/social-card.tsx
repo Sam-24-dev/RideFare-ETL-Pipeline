@@ -21,7 +21,7 @@ export function RideFareSocialCard({
         height: "100%",
         background: brandPalette.stone,
         color: brandPalette.obsidian,
-        fontFamily: "Georgia, serif",
+        fontFamily: '"IBM Plex Sans", Arial, sans-serif',
         position: "relative",
         overflow: "hidden",
       }}
@@ -85,7 +85,7 @@ export function RideFareSocialCard({
               justifyContent: "center",
               width: "100%",
               fontSize: "140px",
-              fontFamily: "Georgia, serif",
+              fontFamily: '"Cormorant Garamond", Georgia, serif',
               letterSpacing: "-0.08em",
               lineHeight: 1,
             }}
@@ -108,7 +108,7 @@ export function RideFareSocialCard({
               letterSpacing: "0.32em",
               fontSize: "20px",
               color: brandPalette.copperDark,
-              fontFamily: "Arial, sans-serif",
+              fontFamily: '"IBM Plex Sans", Arial, sans-serif',
             }}
           >
             {eyebrow}
@@ -126,6 +126,7 @@ export function RideFareSocialCard({
                 fontSize: "86px",
                 lineHeight: 1.02,
                 letterSpacing: "-0.06em",
+                fontFamily: '"Cormorant Garamond", Georgia, serif',
               }}
             >
               {headline}
@@ -136,7 +137,7 @@ export function RideFareSocialCard({
                 fontSize: "34px",
                 lineHeight: 1.34,
                 color: "rgba(24, 33, 43, 0.78)",
-                fontFamily: "Arial, sans-serif",
+                fontFamily: '"IBM Plex Sans", Arial, sans-serif',
               }}
             >
               {body}
@@ -151,7 +152,7 @@ export function RideFareSocialCard({
               letterSpacing: "0.18em",
               textTransform: "uppercase",
               color: brandPalette.copper,
-              fontFamily: "Arial, sans-serif",
+              fontFamily: '"IBM Plex Sans", Arial, sans-serif',
             }}
           >
             <span>{siteConfig.name}</span>
