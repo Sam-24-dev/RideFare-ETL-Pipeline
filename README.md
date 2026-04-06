@@ -48,22 +48,8 @@ RideFare ships four public routes:
 
 ## Architecture Overview
 
-```mermaid
-flowchart LR
-    A[Sample ride and weather CSVs] --> B[ridefare ingest]
-    B --> C[Validated interim Parquet]
-    C --> D[ridefare transform]
-    D --> E[DuckDB warehouse]
-    E --> F[dbt marts]
-    F --> G[ridefare train]
-    G --> H[Versioned ML runs]
-    H --> I[SHAP, metrics, holdout outputs]
-    F --> J[ridefare export-web]
-    I --> J
-    J --> K[Versioned public JSON artifacts]
-    K --> L[Next.js public app]
-    L --> M[Vercel]
-```
+![RideFare Architecture Diagram](./docs/arquitectura.png)
+
 
 ## Technical Stack
 
