@@ -57,7 +57,7 @@ export const metadata: Metadata = {
     description: siteConfig.description,
   },
   other: {
-    "lh3k-verify": "66b50ff13770b70930ad93e19e342730",
+    "lh3k-verify": "df1b7895f38f12101dc938370090b8ee",
   },
 };
 
