@@ -56,6 +56,9 @@ export const metadata: Metadata = {
     title: siteConfig.title,
     description: siteConfig.description,
   },
+  other: {
+    "lh3k-verify": "66b50ff13770b70930ad93e19e342730",
+  },
 };
 
 export default function RootLayout({
