@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This runbook explains how RideFare moves from a pull request to preview and then to
-production on Vercel.
+This runbook explains RideFare's informational pull-request Preview policy and the
+existing production deployment on Vercel.
 
 ## Deployment Model
 
@@ -23,17 +23,21 @@ production on Vercel.
   regenerates public artifacts on `master` when backend or data inputs change and commits
   refreshed JSON outputs back to the branch
 - `vercel-preview.yml`
-  builds a preview deployment for pull requests targeting `master`
+  emits only a fixed informational notice for pull requests targeting `master` on
+  `opened`, `synchronize`, and `reopened`; it does not deploy or validate the application
 - `vercel-production.yml`
   builds and deploys production on `master`
 
 ## Required GitHub Secrets
 
-Add the following repository secrets before enabling the Vercel workflows:
+The production Vercel workflow requires the following repository secrets:
 
 - `VERCEL_TOKEN`
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
+
+`vercel-preview.yml` has `permissions: {}` and no deployment credential references.
+This does not revoke secrets or harden other workflows.
 
 The repository also needs GitHub Actions `contents: write` permission so
 `pipeline-refresh.yml` can commit refreshed artifacts.
@@ -45,17 +49,53 @@ The repository also needs GitHub Actions `contents: write` permission so
 - root directory: `apps/web`
 - native Git auto-deploy: disabled
 
-The app must receive `RIDEFARE_PROJECT_ROOT` at build time. The workflows set it to
-`${{ github.workspace }}` so the loaders can resolve `data/processed/**` from the
-repository root during `vercel build`.
+The app must receive `RIDEFARE_PROJECT_ROOT` at build time. The production deployment
+workflow sets it to `${{ github.workspace }}` so the loaders can resolve
+`data/processed/**` from the repository root during `vercel build`. Preview does not build.
 
 ## Manual Preview Checklist
 
-1. Open or update a pull request targeting `master`
-2. Confirm `ci.yml` passes
-3. Confirm `vercel-preview.yml` publishes a preview URL
-4. Validate `/`, `/dashboard`, `/como-funciona`, and `/escenarios` in the preview
-5. Merge only after the preview matches the repository state
+1. Confirm `vercel-preview.yml` contains only `preview-policy` and the fixed notice
+2. Check `ci.yml` independently; a Preview notice is not an application validation or CI pass
+3. Do not expect a Preview URL or PR comment from this workflow
+
+The notice is: "Automatic PR previews are not deployed by this workflow. This is an
+informational notice, not application validation."
+
+## Local Preview Policy Validation
+
+From the repository root, use an interpreter with PyYAML already available:
+
+```bash
+python -I -B tests/unit/test_preview_workflow_policy.py
+```
+
+This runs `unittest` directly without pytest/conftest or RideFare module imports.
+It checks the closed YAML policy, rejects unsafe in-memory candidates and duplicate keys,
+and statically checks event filters. It does not execute workflow commands or contact GitHub.
+The event matrix is not proof of GitHub execution, fork approval, or effective permissions/secrets.
+An auxiliary Python 3.11 run validates only this YAML boundary, not the application's
+`>=3.12,<3.14` environment or Linux/Python 3.13 CI, package, pipeline, or build.
+
+PyYAML is not directly declared in `pyproject.toml`. The existing CI installs `.[data,ml,dev]`,
+whose `data` extra includes `dbt-duckdb`. Published PyPI metadata for
+[`dbt-duckdb 1.10.1`](https://pypi.org/pypi/dbt-duckdb/1.10.1/json) requires `dbt-core>=1.8.0`,
+and [`dbt-core 1.11.7`](https://pypi.org/pypi/dbt-core/1.11.7/json) requires `pyyaml>=6.0`.
+This is evidence of an existing transitive dependency, not a verified dependency resolution
+or installation in Linux/Python 3.13 CI; no manifests or dependencies change in this slice.
+
+## Scope and Authorization
+
+The independent `ci.yml` remains unchanged. Production, refresh, and release automations
+are not hardened here; the Preview notice does not certify global repository security.
+Local preparation, publication, merge, administration, and deployment are separate permissions.
+Passing the local policy test grants none of the other permissions.
+
+Before future publication, verify workflow/ref resolution for relevant events, that the old
+privileged Preview path cannot activate, data gates (CI regenerates and uploads exports),
+and the other publication controls. If a safe publication bootstrap cannot be demonstrated,
+any bounded Preview administrative measure needs separate authorization, verification, and
+safe reversal; this slice does not pause remote workflows.
 
 ## Manual Production Checklist
 
