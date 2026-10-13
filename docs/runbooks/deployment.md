@@ -20,8 +20,8 @@ existing production deployment on Vercel.
   runs Python validation, regenerates public artifacts in workspace, and validates the
   frontend build against those artifacts
 - `pipeline-refresh.yml`
-  regenerates public artifacts on `master` when backend or data inputs change and commits
-  refreshed JSON outputs back to the branch
+  regenerates public artifacts inside the runner on `master` when backend or data inputs
+  change, or on manual dispatch; reports a diff summary without committing or pushing outputs
 - `vercel-preview.yml`
   emits only a fixed informational notice for pull requests targeting `master` on
   `opened`, `synchronize`, and `reopened`; it does not deploy or validate the application
@@ -39,8 +39,13 @@ The production Vercel workflow requires the following repository secrets:
 `vercel-preview.yml` has `permissions: {}` and no deployment credential references.
 This does not revoke secrets or harden other workflows.
 
-The repository also needs GitHub Actions `contents: write` permission so
-`pipeline-refresh.yml` can commit refreshed artifacts.
+`pipeline-refresh.yml` uses `contents: read` and disables checkout credential persistence.
+Its outputs are ephemeral runner candidates; it does not stage, commit, push, or update the
+JSON versioned on `master`. The independent CI still regenerates and uploads its artifacts.
+Safe publication is deferred to R2, not a restoration of the legacy push.
+
+The local policy check is `python -I -B tests/unit/test_refresh_workflow_policy.py`.
+It does not execute or validate the pipeline or the official Python 3.13 environment.
 
 ## Required Vercel Project Settings
 
@@ -86,8 +91,9 @@ or installation in Linux/Python 3.13 CI; no manifests or dependencies change in 
 
 ## Scope and Authorization
 
-The independent `ci.yml` remains unchanged. Production, refresh, and release automations
-are not hardened here; the Preview notice does not certify global repository security.
+The independent `ci.yml` remains unchanged. Production and release automations are not
+hardened here, and their temporary administrative pauses are unchanged. The Preview notice
+does not certify global repository security.
 Local preparation, publication, merge, administration, and deployment are separate permissions.
 Passing the local policy test grants none of the other permissions.
 
