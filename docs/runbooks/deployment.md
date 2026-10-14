@@ -17,8 +17,10 @@ existing production deployment on Vercel.
 ## GitHub Actions Workflows
 
 - `ci.yml`
-  runs Python validation, regenerates public artifacts in workspace, and validates the
-  frontend build against those artifacts
+  runs Python validation, regenerates public artifacts in workspace, uploads the existing
+  demonstration exports, and validates the frontend build against those artifacts; its
+  `pull_request` and `push` declarations target `master` without path filters, including
+  analytics/ML exports-only changes
 - `pipeline-refresh.yml`
   regenerates public artifacts inside the runner on `master` when backend or data inputs
   change, or on manual dispatch; reports a diff summary without committing or pushing outputs
@@ -91,7 +93,8 @@ or installation in Linux/Python 3.13 CI; no manifests or dependencies change in 
 
 ## Scope and Authorization
 
-The independent `ci.yml` remains unchanged. Production and release automations are not
+The independent `ci.yml` removes only the analytics/ML `paths-ignore` filters; its jobs,
+commands, and artifact flow remain unchanged. Production and release automations are not
 hardened here, and their temporary administrative pauses are unchanged. The Preview notice
 does not certify global repository security.
 Local preparation, publication, merge, administration, and deployment are separate permissions.
