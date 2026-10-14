@@ -3,14 +3,8 @@ name: ci
 on:
   pull_request:
     branches: [master]
-    paths-ignore:
-      - "data/processed/analytics/web/**"
-      - "data/processed/ml/web/**"
   push:
     branches: [master]
-    paths-ignore:
-      - "data/processed/analytics/web/**"
-      - "data/processed/ml/web/**"
 
 permissions:
   contents: read
