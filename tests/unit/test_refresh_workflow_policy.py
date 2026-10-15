@@ -30,12 +30,12 @@ EXPECTED_WORKFLOW = {
             "steps": [
                 {
                     "name": "Checkout repository",
-                    "uses": "actions/checkout@v5",
+                    "uses": "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
                     "with": {"fetch-depth": 0, "persist-credentials": False},
                 },
                 {
                     "name": "Set up Python",
-                    "uses": "actions/setup-python@v6",
+                    "uses": "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
                     "with": {"python-version": "3.13"},
                 },
                 {
@@ -113,6 +113,23 @@ class TestRefreshWorkflowPolicy(unittest.TestCase):
 
     def test_workflow_matches_closed_policy(self):
         self.assert_policy(self.workflow)
+
+    def test_rejects_unapproved_action_references(self):
+        steps = EXPECTED_WORKFLOW["jobs"]["refresh-public-artifacts"]["steps"]
+        for index in (0, 1):
+            repository, sha = steps[index]["uses"].split("@")
+            references = [
+                f"{repository}@{ref}"
+                for ref in ("v5", "v6", "v5.1.0", "v6.3.0", "main", sha[:12], "0" * 40)
+            ]
+            references.append(f"other/{repository.split('/')[1]}@{sha}")
+            for reference in references:
+                with self.subTest(step=index, reference=reference):
+                    candidate = deepcopy(EXPECTED_WORKFLOW)
+                    candidate["jobs"]["refresh-public-artifacts"]["steps"][index]["uses"] = (
+                        reference
+                    )
+                    self.assert_rejected(candidate)
 
     def test_workflow_permissions_are_read_only(self):
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
