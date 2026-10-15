@@ -11,6 +11,18 @@ EXPECTED_EVENTS = {
     "pull_request": {"branches": ["master"]},
     "push": {"branches": ["master"]},
 }
+EXPECTED_ACTIONS = {
+    "python-quality": [
+        "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+        "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+    ],
+    "web-quality": [
+        "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+        "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    ],
+}
 
 
 class CILoader(yaml.SafeLoader):
@@ -74,6 +86,41 @@ class TestCIWorkflowPolicy(unittest.TestCase):
 
     def test_workflow_matches_availability_policy(self):
         self.assert_policy(self.workflow)
+
+    def assert_action_pins(self, workflow):
+        for job_name, expected in EXPECTED_ACTIONS.items():
+            actual = [
+                step["uses"] for step in workflow["jobs"][job_name]["steps"] if "uses" in step
+            ]
+            self.assertEqual(actual, expected)
+
+    def test_workflow_matches_action_pins(self):
+        self.assert_action_pins(self.workflow)
+
+    def test_rejects_unapproved_action_references(self):
+        # Normalize only Action references in memory so negatives also run during legacy RED.
+        candidate = deepcopy(self.workflow)
+        for job_name, expected in EXPECTED_ACTIONS.items():
+            steps = [step for step in candidate["jobs"][job_name]["steps"] if "uses" in step]
+            for step, reference in zip(steps, expected, strict=True):
+                step["uses"] = reference
+        self.assert_action_pins(candidate)
+        for job_name, job in candidate["jobs"].items():
+            for index, step in enumerate(job["steps"]):
+                if "uses" not in step:
+                    continue
+                repository, sha = step["uses"].split("@")
+                references = [
+                    f"{repository}@{ref}"
+                    for ref in ("v4", "v5", "v6", "v4.6.2", "main", sha[:12], "0" * 40)
+                ]
+                references.append(f"other/{repository.split('/')[1]}@{sha}")
+                for reference in references:
+                    with self.subTest(job=job_name, step=index, reference=reference):
+                        invalid = deepcopy(candidate)
+                        invalid["jobs"][job_name]["steps"][index]["uses"] = reference
+                        with self.assertRaises(AssertionError):
+                            self.assert_action_pins(invalid)
 
     def test_rejects_path_filters(self):
         for event in EXPECTED_EVENTS:
