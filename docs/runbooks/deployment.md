@@ -29,6 +29,9 @@ existing production deployment on Vercel.
   `opened`, `synchronize`, and `reopened`; it does not deploy or validate the application
 - `vercel-production.yml`
   builds and deploys production on `master`
+- `release-please.yml`
+  is configured only to manage release PRs, with a pinned action and tag/release creation
+  disabled; its administrative pause remains in effect
 
 ## Required GitHub Secrets
 
@@ -94,9 +97,13 @@ or installation in Linux/Python 3.13 CI; no manifests or dependencies change in 
 ## Scope and Authorization
 
 The independent `ci.yml` removes only the analytics/ML `paths-ignore` filters; its jobs,
-commands, and artifact flow remain unchanged. Production and release automations are not
-hardened here, and their temporary administrative pauses are unchanged. The Preview notice
-does not certify global repository security.
+commands, and artifact flow remain unchanged. Release Please's versioned PR-only policy
+is described in [Release Process](release-process.md); it neither publishes tags/releases
+nor reactivates the workflow. Production deployment code and both administrative pauses
+remain unchanged. Release Please still needs integrity, permission, and CI/protection
+readiness checks; Production still needs promotion and credential-isolation gates.
+Each reactivation requires new individual authorization. The Preview notice does not
+certify global repository security.
 Local preparation, publication, merge, administration, and deployment are separate permissions.
 Passing the local policy test grants none of the other permissions.
 
