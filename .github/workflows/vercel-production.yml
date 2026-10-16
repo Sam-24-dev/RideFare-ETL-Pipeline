@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RIDEFARE_PROJECT_ROOT: ${{ github.workspace }}
+    outputs:
+      artifact_id: ${{ steps.bundle-upload.outputs.artifact-id }}
+      zip_digest: ${{ steps.bundle-upload.outputs.artifact-digest }}
+      package_sha256: ${{ steps.bundle.outputs.package_sha256 }}
 
     steps:
       - name: Validate exact CI attempt
@@ -175,3 +179,352 @@ jobs:
         run: |
           printf '%s\n' '9bb39ac69d8dc234cd93183b48c49995f678d50b135d4409bfa7603b999938e6  .vercel/project.json' | sha256sum --check --status
           vercel build --prod --global-config "$RUNNER_TEMP/ridefare-vercel-build"
+
+      - name: Package production output
+        id: bundle
+        shell: bash
+        env:
+          BUNDLE_MODE: pack
+          BUNDLE_DIR: ${{ runner.temp }}/ridefare-transfer-upload
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+        run: &bundle-transfer |
+          python3 -I -B - <<'PY'
+          import hashlib
+          import io
+          import json
+          import os
+          import re
+          import stat
+          import tarfile
+          import urllib.request
+          from pathlib import Path, PurePosixPath
+
+          REPOSITORY = "Sam-24-dev/RideFare-ETL-Pipeline"
+          SETTINGS_SHA256 = "9bb39ac69d8dc234cd93183b48c49995f678d50b135d4409bfa7603b999938e6"
+          MAX_BYTES, MAX_PACKAGE, MAX_ENTRIES = 64 * 1024**2, 80 * 1024**2, 4096
+          MAX_RECEIPT = 2 * 1024**2
+          PACKAGE = "production-bundle.tar"
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          def digest(stream):
+              return hashlib.file_digest(stream, "sha256").hexdigest()
+
+          def file_digest(path):
+              with path.open("rb") as stream:
+                  return digest(stream)
+
+          def number(name):
+              value = os.environ.get(name, "")
+              require(re.fullmatch(r"[1-9][0-9]*", value), f"Invalid {name}")
+              return int(value)
+
+          def output_path(name):
+              require(isinstance(name, str), "Invalid output path type")
+              path = PurePosixPath(name)
+              require(name.isascii() and 0 < len(name) <= 240
+                      and all(32 <= ord(c) < 127 for c in name)
+                      and "\\" not in name and ":" not in name
+                      and path.as_posix() == name and not path.is_absolute()
+                      and ".." not in path.parts and path.parts[0] == "output",
+                      "External or unsupported output path")
+              parts = path.parts[1:]
+              require(not parts or parts[0] in {"config.json", "builds.json", "static", "functions"},
+                      "Unexpected output entry")
+              require(not any(p in {".git", ".vercel", ".npmrc", ".netrc", "auth.json"}
+                              or p == ".env" or p.startswith(".env.") for p in parts),
+                      "Authentication or environment file is not transferable")
+              try:
+                  tarfile.TarInfo(name).tobuf(format=tarfile.USTAR_FORMAT)
+              except ValueError:
+                  raise SystemExit("Output path cannot be represented in USTAR") from None
+              return path
+
+          def inventory(root):
+              entries = []
+              total = 0
+
+              def visit(path, name):
+                  nonlocal total
+                  output_path(name)
+                  info = path.lstat()
+                  mode = stat.S_IMODE(info.st_mode)
+                  require(mode & ~0o777 == 0, "Special permission bits are unsupported")
+                  require(not stat.S_ISLNK(info.st_mode), f"Unsupported link: {name}")
+                  directory = stat.S_ISDIR(info.st_mode)
+                  require(directory or stat.S_ISREG(info.st_mode), f"Unsupported file type: {name}")
+                  require(directory or info.st_nlink == 1, f"Unsupported hard link: {name}")
+                  header = tarfile.TarInfo(name)
+                  header.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
+                  try:
+                      header.tobuf(format=tarfile.USTAR_FORMAT)
+                  except ValueError:
+                      raise SystemExit("Output directory cannot be represented in USTAR") from None
+                  size = 0 if directory else info.st_size
+                  total += size
+                  require(total <= MAX_BYTES and len(entries) < MAX_ENTRIES,
+                          "Output exceeds the 64 MiB / 4096 entry transfer limit")
+                  entries.append({"path": name, "type": "directory" if directory else "file",
+                                  "mode": mode, "size": size, "mtime": int(info.st_mtime),
+                                  "sha256": None if directory else file_digest(path)})
+                  if directory:
+                      for child in sorted(path.iterdir()):
+                          visit(child, name + "/" + child.name)
+
+              visit(root, "output")
+              require(any(e["path"] == "output/config.json" and e["type"] == "file"
+                          for e in entries), "Missing output/config.json")
+              return entries
+
+          def json_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, "Duplicate receipt key")
+                  result[key] = value
+              return result
+
+          require(os.environ.get("GITHUB_REPOSITORY") == REPOSITORY, "Wrong repository")
+          require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                  and os.environ.get("GITHUB_REF") == "refs/heads/master", "Manual master only")
+          sha = os.environ.get("GITHUB_SHA", "")
+          require(re.fullmatch(r"[0-9a-f]{40}", sha), "Invalid SHA")
+          provenance = {
+              "repository": REPOSITORY, "sha": sha, "ci_run_id": number("CI_RUN_ID"),
+              "ci_run_attempt": number("CI_RUN_ATTEMPT"), "build_run_id": number("GITHUB_RUN_ID"),
+              "build_run_attempt": number("GITHUB_RUN_ATTEMPT"), "workflow_id": 256058391,
+              "cli_version": "50.39.0", "settings_sha256": SETTINGS_SHA256,
+          }
+          directory = Path(os.environ["BUNDLE_DIR"])
+          package = directory / PACKAGE
+          mode = os.environ.get("BUNDLE_MODE")
+          require(mode in {"pack", "verify"}, "Unknown transfer mode")
+
+          if mode == "pack":
+              workspace = Path(os.environ["GITHUB_WORKSPACE"])
+              settings = workspace / ".vercel/project.json"
+              require(not settings.is_symlink() and file_digest(settings) == SETTINGS_SHA256,
+                      "Public settings changed after build")
+              root = workspace / ".vercel/output"
+              require(not (workspace / ".vercel").is_symlink(), "Unsupported settings-directory symlink")
+              entries = inventory(root)
+              receipt = json.dumps({"version": 1, "provenance": provenance, "entries": entries},
+                                   sort_keys=True, separators=(",", ":")).encode()
+              require(len(receipt) <= MAX_RECEIPT, "Receipt exceeds 2 MiB")
+              directory.mkdir()
+              with tarfile.open(package, "w:", format=tarfile.USTAR_FORMAT) as archive:
+                  header = tarfile.TarInfo("receipt.json")
+                  header.size, header.mode = len(receipt), 0o600
+                  archive.addfile(header, io.BytesIO(receipt))
+                  for entry in entries:
+                      header = tarfile.TarInfo(entry["path"])
+                      header.type = tarfile.DIRTYPE if entry["type"] == "directory" else tarfile.REGTYPE
+                      header.mode, header.size, header.mtime = entry["mode"], entry["size"], entry["mtime"]
+                      if entry["type"] == "directory":
+                          archive.addfile(header)
+                      else:
+                          with (root.parent / entry["path"]).open("rb") as stream:
+                              archive.addfile(header, stream)
+              require(package.stat().st_size <= MAX_PACKAGE, "Package exceeds 80 MiB")
+              require(inventory(root) == entries, "Output changed while packaging")
+              package_hash = file_digest(package)
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write(f"package_sha256={package_hash}\n")
+              print(json.dumps({"provenance": provenance, "entries": entries,
+                                "links": 0, "bytes": sum(e["size"] for e in entries),
+                                "package_bytes": package.stat().st_size, "package_sha256": package_hash}))
+          else:
+              artifact_id = number("ARTIFACT_ID")
+              package_hash = os.environ.get("PACKAGE_SHA256", "")
+              zip_digest = os.environ.get("ZIP_DIGEST", "")
+              require(re.fullmatch(r"[0-9a-f]{64}", package_hash)
+                      and re.fullmatch(r"[0-9a-f]{64}", zip_digest), "Invalid expected digest")
+              api = f"https://api.github.com/repos/{REPOSITORY}"
+
+              def get(path):
+                  request = urllib.request.Request(api + path, headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2026-03-10",
+                  }, method="GET")
+                  try:
+                      with urllib.request.urlopen(request, timeout=30) as response:
+                          result = json.load(response)
+                  except (OSError, ValueError):
+                      raise SystemExit("GitHub metadata GET failed") from None
+                  require(isinstance(result, dict), "Invalid GitHub metadata")
+                  return result
+
+              run_id, attempt = provenance["build_run_id"], provenance["build_run_attempt"]
+              expected_run = {"id": run_id, "run_attempt": attempt, "workflow_id": 256058391,
+                              "path": ".github/workflows/vercel-production.yml",
+                              "event": "workflow_dispatch", "head_branch": "master", "head_sha": sha}
+              run = get(f"/actions/runs/{run_id}/attempts/{attempt}")
+              latest = get(f"/actions/runs/{run_id}")
+              for candidate in (run, latest):
+                  require(all(candidate.get(k) == v for k, v in expected_run.items()),
+                          "Wrong build run identity or attempt")
+                  for key in ("repository", "head_repository"):
+                      require(candidate.get(key, {}).get("full_name") == REPOSITORY,
+                              "Foreign build repository")
+              require(get("/git/ref/heads/master").get("object", {}).get("sha") == sha, "master moved")
+              result = get(f"/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+              jobs = result.get("jobs", [])
+              require(result.get("total_count") == len(jobs) == 2
+                      and {j.get("name") for j in jobs} == {"production-build", "verify-production-bundle"},
+                      "Incomplete or unexpected build jobs")
+              producer = next(j for j in jobs if j.get("name") == "production-build")
+              require(producer.get("run_id") == run_id and producer.get("run_attempt") == attempt
+                      and producer.get("head_sha") == sha and producer.get("status") == "completed"
+                      and producer.get("conclusion") == "success", "Producer job did not succeed")
+              artifact = get(f"/actions/artifacts/{artifact_id}")
+              artifact_name = f"production-bundle-{run_id}-{attempt}"
+              require(artifact.get("id") == artifact_id and artifact.get("name") == artifact_name
+                      and artifact.get("expired") is False
+                      and artifact.get("digest") == "sha256:" + zip_digest,
+                      "Wrong artifact identity or ZIP digest")
+              origin = artifact.get("workflow_run", {})
+              require(origin == {"id": run_id, "head_sha": sha, "head_branch": "master",
+                                 "repository_id": run["repository"]["id"],
+                                 "head_repository_id": run["head_repository"]["id"]},
+                      "Artifact belongs to another run, revision or repository")
+              require(not directory.is_symlink() and set(p.name for p in directory.iterdir()) == {PACKAGE}
+                      and package.is_file() and not package.is_symlink()
+                      and package.stat().st_size <= MAX_PACKAGE,
+                      "Unexpected downloaded files or package size")
+              require(file_digest(package) == package_hash, "Package SHA-256 mismatch")
+              with tarfile.open(package, "r:") as archive:
+                  members = {}
+                  for member in archive:
+                      require(len(members) < MAX_ENTRIES + 1 and member.name not in members,
+                              "Duplicate or excessive archive entries")
+                      require(member.type in {tarfile.REGTYPE, tarfile.DIRTYPE}
+                              and not member.linkname and not member.pax_headers
+                              and not archive.pax_headers and not member.issparse(),
+                              "Unsupported archive link, type or extended header")
+                      require(member.uid == member.gid == 0 and not member.uname and not member.gname,
+                              "Unexpected archive ownership metadata")
+                      if member.name != "receipt.json":
+                          output_path(member.name)
+                      members[member.name] = member
+                  archive.fileobj.seek(archive.offset)
+                  require(not any(archive.fileobj.read()), "Unexpected data after archive end")
+                  header = members.get("receipt.json")
+                  require(header is not None and header.isfile() and header.size <= MAX_RECEIPT,
+                          "Missing or excessive receipt")
+                  receipt = json.loads(archive.extractfile(header).read(), object_pairs_hook=json_object)
+                  require(isinstance(receipt, dict) and set(receipt) == {"version", "provenance", "entries"}
+                          and type(receipt["version"]) is int and receipt["version"] == 1
+                          and json.dumps(receipt["provenance"], sort_keys=True)
+                          == json.dumps(provenance, sort_keys=True), "Receipt provenance mismatch")
+                  entries = receipt["entries"]
+                  require(isinstance(entries, list) and 0 < len(entries) <= MAX_ENTRIES,
+                          "Invalid receipt inventory")
+                  expected_names = {"receipt.json"}
+                  total = 0
+                  for entry in entries:
+                      require(isinstance(entry, dict) and set(entry) == {
+                          "path", "type", "mode", "size", "mtime", "sha256"}, "Invalid inventory fields")
+                      name = entry["path"]
+                      output_path(name)
+                      require(name not in expected_names and name in members, "Missing or duplicate file")
+                      expected_names.add(name)
+                      member = members[name]
+                      require(entry["type"] in {"file", "directory"}
+                              and member.isdir() == (entry["type"] == "directory"), "File type mismatch")
+                      for key in ("mode", "size", "mtime"):
+                          require(type(entry[key]) is int and entry[key] >= 0, "Invalid file metadata")
+                      require(entry["mode"] <= 0o777 and member.mode == entry["mode"]
+                              and member.size == entry["size"] and member.mtime == entry["mtime"],
+                              "Archive metadata differs from inventory")
+                      total += entry["size"]
+                      require(total <= MAX_BYTES, "Output exceeds 64 MiB")
+                      if member.isfile():
+                          require(digest(archive.extractfile(member)) == entry["sha256"],
+                                  "File content mismatch")
+                      else:
+                          require(entry["size"] == 0 and entry["sha256"] is None,
+                                  "Invalid directory metadata")
+                  require(set(members) == expected_names and "output" in expected_names
+                          and members["output"].isdir() and "output/config.json" in expected_names
+                          and members["output/config.json"].isfile(), "Unexpected or missing archive entries")
+                  for entry in entries:
+                      for parent in PurePosixPath(entry["path"]).parents:
+                          if parent.as_posix() != ".":
+                              require(parent.as_posix() in expected_names
+                                      and members[parent.as_posix()].isdir(),
+                                      "Missing or non-directory parent in inventory")
+                  # Extract no links and execute nothing; only the complete validated tree is materialized.
+                  destination = Path(os.environ["EXTRACT_DIR"])
+                  destination.mkdir()
+                  for entry in sorted(entries, key=lambda e: e["path"]):
+                      target = destination / entry["path"]
+                      if entry["type"] == "directory":
+                          target.mkdir()
+                      else:
+                          with target.open("xb") as stream:
+                              stream.write(archive.extractfile(members[entry["path"]]).read())
+                  for entry in sorted(entries, key=lambda e: e["path"], reverse=True):
+                      target = destination / entry["path"]
+                      os.chmod(target, entry["mode"])
+                      os.utime(target, (entry["mtime"], entry["mtime"]))
+              require(inventory(destination / "output") == entries, "Restored content or metadata mismatch")
+              print(json.dumps({"verified": provenance, "artifact_id": artifact_id,
+                                "artifact_name": artifact_name, "github_zip_digest": zip_digest,
+                                "package_sha256": package_hash, "entries": len(entries), "bytes": total,
+                                "executed_bundle": False}))
+          PY
+
+      - name: Upload production bundle
+        id: bundle-upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ridefare-transfer-upload/production-bundle.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: false
+
+  verify-production-bundle:
+    runs-on: ubuntu-latest
+    needs: production-build
+    steps:
+      - name: Require single artifact ID
+        id: artifact-source
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ needs.production-build.outputs.artifact_id }}
+        run: |
+          python3 -I -B - <<'PY'
+          import os
+          import re
+
+          value = os.environ.get("ARTIFACT_ID", "")
+          if not re.fullmatch(r"[1-9][0-9]*", value):
+              raise SystemExit("A single explicit artifact ID is required")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"id={value}\n")
+          PY
+
+      - name: Download exact production bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.artifact-source.outputs.id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/ridefare-transfer-received
+
+      - name: Verify production bundle
+        shell: bash
+        env:
+          BUNDLE_MODE: verify
+          BUNDLE_DIR: ${{ runner.temp }}/ridefare-transfer-received
+          EXTRACT_DIR: ${{ runner.temp }}/ridefare-transfer-verified
+          ARTIFACT_ID: ${{ needs.production-build.outputs.artifact_id }}
+          ZIP_DIGEST: ${{ needs.production-build.outputs.zip_digest }}
+          PACKAGE_SHA256: ${{ needs.production-build.outputs.package_sha256 }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: *bundle-transfer
