@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Validate required Vercel secrets
         shell: bash
@@ -33,7 +33,7 @@ jobs:
           test -n "$VERCEL_PROJECT_ID"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.13"
 
@@ -47,7 +47,7 @@ jobs:
         run: ./scripts/refresh-public-artifacts.ps1 -RunId production-${{ github.run_number }}
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: "22"
 
