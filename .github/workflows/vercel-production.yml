@@ -1,36 +1,121 @@
 name: vercel-production
 
 on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - "data/processed/analytics/web/**"
-      - "data/processed/ml/web/**"
-      - "docs/**"
-      - "README.md"
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful push/master CI run ID for this exact master SHA
+        required: true
+        type: string
+      ci_run_attempt:
+        description: Exact completed CI attempt number
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
+  checks: read
 
 jobs:
-  production-deploy:
+  production-build:
     runs-on: ubuntu-latest
     env:
       RIDEFARE_PROJECT_ROOT: ${{ github.workspace }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-
-      - name: Validate required Vercel secrets
+      - name: Validate exact CI attempt
+        id: ci
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
         run: |
-          test -n "$VERCEL_TOKEN"
-          test -n "$VERCEL_ORG_ID"
-          test -n "$VERCEL_PROJECT_ID"
+          python3 -I -B - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+          repository = "Sam-24-dev/RideFare-ETL-Pipeline"
+          api = f"https://api.github.com/repos/{repository}"
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "Manual runs only")
+          require(os.environ.get("GITHUB_REPOSITORY") == repository, "Wrong repository")
+          require(os.environ.get("GITHUB_REF") == "refs/heads/master", "master only")
+          sha = os.environ.get("GITHUB_SHA", "")
+          require(re.fullmatch(r"[0-9a-f]{40}", sha), "Invalid master SHA")
+          run_id = os.environ.get("CI_RUN_ID", "")
+          attempt = os.environ.get("CI_RUN_ATTEMPT", "")
+          require(re.fullmatch(r"[1-9][0-9]*", run_id), "Invalid CI run ID")
+          require(re.fullmatch(r"[1-9][0-9]*", attempt), "Invalid CI attempt")
+          expected = {
+              "id": int(run_id), "run_attempt": int(attempt), "workflow_id": 256052140,
+              "path": ".github/workflows/ci.yml", "event": "push", "head_branch": "master",
+              "head_sha": sha, "status": "completed", "conclusion": "success",
+          }
+
+          def get(path):
+              request = urllib.request.Request(api + path, headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "X-GitHub-Api-Version": "2026-03-10",
+              }, method="GET")
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      data = json.load(response)
+              except (OSError, ValueError):
+                  raise SystemExit(f"GitHub GET failed: {path}") from None
+              require(isinstance(data, dict), "Invalid GitHub response")
+              return data
+
+          def validate_run(run):
+              require(all(run.get(key) == value for key, value in expected.items()),
+                      "CI must be this exact successful push/master run and attempt")
+              for field in ("repository", "head_repository"):
+                  require(run.get(field, {}).get("full_name") == repository, "Foreign CI repository")
+
+          require(get("/git/ref/heads/master").get("object", {}).get("sha") == sha, "master moved")
+          run = get(f"/actions/runs/{run_id}/attempts/{attempt}")
+          validate_run(run)
+          suite = run.get("check_suite_id")
+          require(isinstance(suite, int) and suite > 0, "Missing CI check suite")
+          result = get(f"/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+          jobs = result.get("jobs", [])
+          require(result.get("total_count") == len(jobs) == 2, "Incomplete or unexpected CI jobs")
+          require({job.get("name") for job in jobs} == {"python-quality", "web-quality"},
+                  "Required CI job names differ")
+          for job in jobs:
+              require(job.get("run_id") == int(run_id) and job.get("run_attempt") == int(attempt)
+                      and job.get("head_sha") == sha and job.get("status") == "completed"
+                      and job.get("conclusion") == "success", "CI job is not approved")
+              match = re.fullmatch(re.escape(api) + r"/check-runs/([1-9][0-9]*)",
+                                   job.get("check_run_url", ""))
+              require(match, "Foreign or invalid CI check URL")
+              check = get(f"/check-runs/{match.group(1)}")
+              require(check.get("id") == int(match.group(1)) and check.get("name") == job["name"]
+                      and check.get("head_sha") == sha and check.get("status") == "completed"
+                      and check.get("conclusion") == "success" and check.get("app", {}).get("id") == 15368
+                      and check.get("check_suite", {}).get("id") == suite, "CI check is not approved")
+          latest = get(f"/actions/runs/{run_id}")
+          validate_run(latest)
+          require(latest.get("check_suite_id") == suite, "CI check suite changed")
+          require(get("/git/ref/heads/master").get("object", {}).get("sha") == sha, "master moved")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"sha={sha}\n")
+          print(f"Validated CI {run_id}, attempt {attempt}, master {sha}; build only")
+          PY
+
+      - name: Checkout validated revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ steps.ci.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -60,20 +145,33 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@50.39.0
 
-      - name: Pull Vercel environment
-        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-
-      - name: Build production bundle
-        run: vercel build --prod --token="$VERCEL_TOKEN"
-
-      - name: Deploy production
-        id: deploy
+      - name: Prepare public Vercel settings
         shell: bash
         run: |
-          url="$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")"
-          echo "production_url=$url" >> "$GITHUB_OUTPUT"
+          test ! -e .vercel
+          test ! -e "$RUNNER_TEMP/ridefare-vercel-build"
+          mkdir .vercel "$RUNNER_TEMP/ridefare-vercel-build"
+          cat > .vercel/project.json <<'JSON'
           {
-            echo "## Vercel production"
-            echo
-            echo "$url"
-          } >> "$GITHUB_STEP_SUMMARY"
+            "projectId": "prj_tS8gW1XL7PuYmvH3rD3ATUh6MTEO",
+            "orgId": "team_FO5NX52lZMHAG9a8lgb7Zczq",
+            "projectName": "ride-fare-etl-pipeline-web",
+            "settings": {
+              "createdAt": 1775274106564,
+              "framework": "nextjs",
+              "devCommand": null,
+              "installCommand": null,
+              "buildCommand": null,
+              "outputDirectory": null,
+              "rootDirectory": "apps/web",
+              "directoryListing": false,
+              "nodeVersion": "22.x"
+            }
+          }
+          JSON
+
+      - name: Build production bundle
+        shell: bash
+        run: |
+          printf '%s\n' '9bb39ac69d8dc234cd93183b48c49995f678d50b135d4409bfa7603b999938e6  .vercel/project.json' | sha256sum --check --status
+          vercel build --prod --global-config "$RUNNER_TEMP/ridefare-vercel-build"
