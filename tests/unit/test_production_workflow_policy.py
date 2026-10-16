@@ -736,6 +736,30 @@ class TestProductionBundleTransfer(unittest.TestCase):
             self.assertFalse((self.root / "verified").exists())
         self.assertFalse((self.root / "escape").exists())
 
+    def test_unexpected_output_entry_reports_relative_path_before_packaging(self):
+        (self.output / "unapproved-fixture.txt").write_bytes(b"fixture contents, never logged")
+        with self.assertRaises(SystemExit) as rejected:
+            self.execute("pack")
+        self.assertFalse((self.root / "upload").exists())
+        self.assertFalse((self.root / "job-output").exists())
+        self.assertEqual(str(rejected.exception),
+                         "Unexpected output entry: output/unapproved-fixture.txt")
+
+    def test_invalid_output_paths_are_not_echoed_in_diagnostics(self):
+        package = self.package_fixture()
+        original = package.read_bytes()
+        for name in (
+            "/runner/private.txt", "output/\n::notice::forged", "output/\rforged",
+            "output/\x1b[31mforged", "output/" + "x" * 135 + "/" + "y" * 100,
+        ):
+            package.write_bytes(original)
+            member = tarfile.TarInfo(name)
+            self.rewrite_package(lambda entries: entries + [(member, b"")])
+            with self.subTest(name=name), self.assertRaises(SystemExit) as rejected:
+                self.verify()
+            self.assertEqual(str(rejected.exception), "External or unsupported output path")
+            self.assertFalse((self.root / "verified").exists())
+
     def test_producer_rejects_unsupported_output_and_sensitive_file_names(self):
         for relative in (".env", "static/.env.local", "static/.npmrc", "cache/file",
                          "unexpected.txt"):

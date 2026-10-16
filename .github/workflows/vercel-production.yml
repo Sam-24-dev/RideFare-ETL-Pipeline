@@ -233,7 +233,7 @@ jobs:
                       "External or unsupported output path")
               parts = path.parts[1:]
               require(not parts or parts[0] in {"config.json", "builds.json", "static", "functions"},
-                      "Unexpected output entry")
+                      f"Unexpected output entry: {name}")
               require(not any(p in {".git", ".vercel", ".npmrc", ".netrc", "auth.json"}
                               or p == ".env" or p.startswith(".env.") for p in parts),
                       "Authentication or environment file is not transferable")
