@@ -194,6 +194,7 @@ jobs:
           import io
           import json
           import os
+          import posixpath
           import re
           import stat
           import tarfile
@@ -205,6 +206,8 @@ jobs:
           MAX_BYTES, MAX_PACKAGE, MAX_ENTRIES = 64 * 1024**2, 80 * 1024**2, 4096
           MAX_RECEIPT = 2 * 1024**2
           PACKAGE = "production-bundle.tar"
+          TAR_TYPES = {"file": tarfile.REGTYPE, "directory": tarfile.DIRTYPE,
+                       "func-alias": tarfile.SYMTYPE}
 
           def require(condition, message):
               if not condition:
@@ -243,6 +246,35 @@ jobs:
                   raise SystemExit("Output path cannot be represented in USTAR") from None
               return path
 
+          def alias_target(name, target):
+              path = output_path(name)
+              require(path.parts[:2] == ("output", "functions") and len(path.parts) > 2
+                      and path.name.endswith(".func"), "Unsupported function alias location")
+              require(isinstance(target, str) and target.isascii() and 0 < len(target) <= 100
+                      and all(32 <= ord(c) < 127 for c in target)
+                      and "\\" not in target and ":" not in target
+                      and not PurePosixPath(target).is_absolute()
+                      and PurePosixPath(target).as_posix() == target, "Invalid relative alias target")
+              destination = posixpath.normpath(posixpath.join(path.parent.as_posix(), target))
+              require(destination.startswith("output/functions/")
+                      and PurePosixPath(destination).name.endswith(".func")
+                      and posixpath.relpath(destination, path.parent.as_posix()) == target,
+                      "Non-canonical or external function alias target")
+              return output_path(destination).as_posix()
+
+          def validate_aliases(entries):
+              selected = {entry["path"]: entry for entry in entries}
+              for entry in entries:
+                  if entry["type"] != "func-alias":
+                      continue
+                  destination = alias_target(entry["path"], entry["target"])
+                  require(selected.get(destination, {}).get("type") == "directory",
+                          "Alias target must be a selected real .func directory")
+                  for parent in PurePosixPath(destination).parents:
+                      if parent.as_posix() != ".":
+                          require(selected.get(parent.as_posix(), {}).get("type") == "directory",
+                                  "Symbolic or missing alias target parent")
+
           def inventory(root, *, omit_diagnostics=False):
               entries = []
               total = 0
@@ -262,28 +294,37 @@ jobs:
                   info = path.lstat()
                   mode = stat.S_IMODE(info.st_mode)
                   require(mode & ~0o777 == 0, "Special permission bits are unsupported")
-                  require(not stat.S_ISLNK(info.st_mode), f"Unsupported link: {name}")
+                  alias = stat.S_ISLNK(info.st_mode)
+                  target = os.readlink(path) if alias else None
+                  if alias:
+                      alias_target(name, target)
                   directory = stat.S_ISDIR(info.st_mode)
-                  require(directory or stat.S_ISREG(info.st_mode), f"Unsupported file type: {name}")
+                  require(alias or directory or stat.S_ISREG(info.st_mode),
+                          f"Unsupported file type: {name}")
                   require(directory or info.st_nlink == 1, f"Unsupported hard link: {name}")
+                  kind = "func-alias" if alias else "directory" if directory else "file"
                   header = tarfile.TarInfo(name)
-                  header.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
+                  header.type, header.linkname = TAR_TYPES[kind], target if alias else ""
                   try:
                       header.tobuf(format=tarfile.USTAR_FORMAT)
                   except ValueError:
                       raise SystemExit("Output directory cannot be represented in USTAR") from None
-                  size = 0 if directory else info.st_size
+                  size = 0 if directory or alias else info.st_size
                   total += size
                   require(total <= MAX_BYTES and len(entries) < MAX_ENTRIES,
                           "Output exceeds the 64 MiB / 4096 entry transfer limit")
-                  entries.append({"path": name, "type": "directory" if directory else "file",
-                                  "mode": mode, "size": size, "mtime": int(info.st_mtime),
-                                  "sha256": None if directory else file_digest(path)})
+                  entry = {"path": name, "type": kind, "mode": 0o777 if alias else mode,
+                           "size": size, "mtime": 0 if alias else int(info.st_mtime),
+                           "sha256": None if directory or alias else file_digest(path)}
+                  if alias:
+                      entry["target"] = target
+                  entries.append(entry)
                   if directory:
                       for child in sorted(path.iterdir()):
                           visit(child, name + "/" + child.name)
 
               visit(root, "output")
+              validate_aliases(entries)
               require(any(e["path"] == "output/config.json" and e["type"] == "file"
                           for e in entries), "Missing output/config.json")
               return entries, diagnostics_state
@@ -325,7 +366,7 @@ jobs:
               require(not (workspace / ".vercel").is_symlink(), "Unsupported settings-directory symlink")
               entries, diagnostics_state = inventory(root, omit_diagnostics=True)
               selection["diagnostics"]["state"] = diagnostics_state
-              receipt = json.dumps({"version": 2, "provenance": provenance,
+              receipt = json.dumps({"version": 3, "provenance": provenance,
                                     "selection": selection, "entries": entries},
                                    sort_keys=True, separators=(",", ":")).encode()
               require(len(receipt) <= MAX_RECEIPT, "Receipt exceeds 2 MiB")
@@ -336,9 +377,10 @@ jobs:
                   archive.addfile(header, io.BytesIO(receipt))
                   for entry in entries:
                       header = tarfile.TarInfo(entry["path"])
-                      header.type = tarfile.DIRTYPE if entry["type"] == "directory" else tarfile.REGTYPE
+                      header.type = TAR_TYPES[entry["type"]]
+                      header.linkname = entry.get("target", "")
                       header.mode, header.size, header.mtime = entry["mode"], entry["size"], entry["mtime"]
-                      if entry["type"] == "directory":
+                      if entry["type"] != "file":
                           archive.addfile(header)
                       else:
                           with (root.parent / entry["path"]).open("rb") as stream:
@@ -350,7 +392,8 @@ jobs:
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                   output.write(f"package_sha256={package_hash}\n")
               print(json.dumps({"provenance": provenance, "selection": selection, "entries": entries,
-                                "payload_links": 0, "bytes": sum(e["size"] for e in entries),
+                                "payload_links": sum(e["type"] == "func-alias" for e in entries),
+                                "bytes": sum(e["size"] for e in entries),
                                 "package_bytes": package.stat().st_size, "package_sha256": package_hash}))
           else:
               artifact_id = number("ARTIFACT_ID")
@@ -417,14 +460,16 @@ jobs:
                   for member in archive:
                       require(len(members) < MAX_ENTRIES + 1 and member.name not in members,
                               "Duplicate or excessive archive entries")
-                      require(member.type in {tarfile.REGTYPE, tarfile.DIRTYPE}
-                              and not member.linkname and not member.pax_headers
+                      require(member.type in TAR_TYPES.values()
+                              and (member.issym() or not member.linkname) and not member.pax_headers
                               and not archive.pax_headers and not member.issparse(),
                               "Unsupported archive link, type or extended header")
                       require(member.uid == member.gid == 0 and not member.uname and not member.gname,
                               "Unexpected archive ownership metadata")
                       if member.name != "receipt.json":
                           output_path(member.name)
+                      if member.issym():
+                          alias_target(member.name, member.linkname)
                       members[member.name] = member
                   archive.fileobj.seek(archive.offset)
                   require(not any(archive.fileobj.read()), "Unexpected data after archive end")
@@ -434,7 +479,7 @@ jobs:
                   receipt = json.loads(archive.extractfile(header).read(), object_pairs_hook=json_object)
                   require(isinstance(receipt, dict)
                           and set(receipt) == {"version", "provenance", "selection", "entries"}
-                          and type(receipt["version"]) is int and receipt["version"] == 2
+                          and type(receipt["version"]) is int and receipt["version"] == 3
                           and json.dumps(receipt["provenance"], sort_keys=True)
                           == json.dumps(provenance, sort_keys=True), "Receipt provenance mismatch")
                   require(isinstance(receipt["selection"], dict)
@@ -450,15 +495,17 @@ jobs:
                   expected_names = {"receipt.json"}
                   total = 0
                   for entry in entries:
-                      require(isinstance(entry, dict) and set(entry) == {
-                          "path", "type", "mode", "size", "mtime", "sha256"}, "Invalid inventory fields")
+                      require(isinstance(entry, dict), "Invalid inventory entry")
+                      alias = entry.get("type") == "func-alias"
+                      require(set(entry) == {"path", "type", "mode", "size", "mtime", "sha256"}
+                              | ({"target"} if alias else set()), "Invalid inventory fields")
                       name = entry["path"]
                       output_path(name)
                       require(name not in expected_names and name in members, "Missing or duplicate file")
                       expected_names.add(name)
                       member = members[name]
-                      require(entry["type"] in {"file", "directory"}
-                              and member.isdir() == (entry["type"] == "directory"), "File type mismatch")
+                      require(entry["type"] in ("file", "directory", "func-alias")
+                              and member.type == TAR_TYPES[entry["type"]], "File type mismatch")
                       for key in ("mode", "size", "mtime"):
                           require(type(entry[key]) is int and entry[key] >= 0, "Invalid file metadata")
                       require(entry["mode"] <= 0o777 and member.mode == entry["mode"]
@@ -471,7 +518,11 @@ jobs:
                                   "File content mismatch")
                       else:
                           require(entry["size"] == 0 and entry["sha256"] is None,
-                                  "Invalid directory metadata")
+                                  "Invalid directory or alias metadata")
+                      if alias:
+                          require(entry["mode"] == 0o777 and entry["mtime"] == 0
+                                  and member.linkname == entry["target"], "Invalid alias metadata")
+                          alias_target(name, entry["target"])
                   require(set(members) == expected_names and "output" in expected_names
                           and members["output"].isdir() and "output/config.json" in expected_names
                           and members["output/config.json"].isfile(), "Unexpected or missing archive entries")
@@ -481,17 +532,25 @@ jobs:
                               require(parent.as_posix() in expected_names
                                       and members[parent.as_posix()].isdir(),
                                       "Missing or non-directory parent in inventory")
-                  # Extract no links and execute nothing; only the complete validated tree is materialized.
+                  validate_aliases(entries)
+                  # All structure checks precede filesystem writes; aliases are created last.
                   destination = Path(os.environ["EXTRACT_DIR"])
                   destination.mkdir()
                   for entry in sorted(entries, key=lambda e: e["path"]):
+                      if entry["type"] == "func-alias":
+                          continue
                       target = destination / entry["path"]
                       if entry["type"] == "directory":
                           target.mkdir()
                       else:
                           with target.open("xb") as stream:
                               stream.write(archive.extractfile(members[entry["path"]]).read())
+                  for entry in entries:
+                      if entry["type"] == "func-alias":
+                          os.symlink(entry["target"], destination / entry["path"], target_is_directory=True)
                   for entry in sorted(entries, key=lambda e: e["path"], reverse=True):
+                      if entry["type"] == "func-alias":
+                          continue
                       target = destination / entry["path"]
                       os.chmod(target, entry["mode"])
                       os.utime(target, (entry["mtime"], entry["mtime"]))
@@ -501,6 +560,7 @@ jobs:
                                 "artifact_id": artifact_id,
                                 "artifact_name": artifact_name, "github_zip_digest": zip_digest,
                                 "package_sha256": package_hash, "entries": len(entries), "bytes": total,
+                                "payload_links": sum(e["type"] == "func-alias" for e in entries),
                                 "executed_bundle": False}))
           PY
 
