@@ -13,6 +13,7 @@ import unittest
 from contextlib import redirect_stdout
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 from urllib.error import URLError
 
@@ -539,8 +540,9 @@ class TestProductionBundleTransfer(unittest.TestCase):
 
         with patch.dict(os.environ, environment, clear=True), \
                 patch("urllib.request.urlopen", side_effect=fake_get), \
-                redirect_stdout(io.StringIO()):
+                redirect_stdout(io.StringIO()) as output:
             exec(compile(code, "<production-bundle-transfer>", "exec"), {})
+        self.report = json.loads(output.getvalue())
         return requests
 
     def package_fixture(self):
@@ -605,6 +607,239 @@ class TestProductionBundleTransfer(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(data) if member.isfile() else None)
         self.digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def test_source_hardlinks_round_trip_as_independent_regular_files(self):
+        source = self.output / "static/index.html"
+        second = self.output / "static/second.html"
+        second.hardlink_to(source)
+        os.utime(source, (1700000000, 1700000000))
+        before = source.lstat()
+        contents = source.read_bytes()
+        self.assertTrue(os.path.samefile(source, second))
+        self.assertEqual(before.st_nlink, 2)
+        try:
+            package = self.package_fixture()
+        except SystemExit as error:
+            self.fail(f"Expected independent regular bytes from real hard links, got: {error}")
+        self.assertEqual(self.report["source_regular_files_with_multiple_links"], 2)
+        self.assertEqual(self.report["payload_links"], 0)
+        with tarfile.open(package, "r:") as archive:
+            receipt = json.load(archive.extractfile("receipt.json"))
+            self.assertEqual(receipt["version"], 4)
+            self.assertEqual(receipt["selection"]["regular_files"], "independent-bytes")
+            self.assertFalse(any(m.islnk() for m in archive))
+            for path in ("output/static/index.html", "output/static/second.html"):
+                member = archive.getmember(path)
+                self.assertEqual(member.type, tarfile.REGTYPE)
+                self.assertEqual(member.size, len(contents))
+                self.assertEqual(archive.extractfile(member).read(), contents)
+        self.verify()
+        restored = self.root / "verified/output/static"
+        self.assertFalse(os.path.samefile(restored / source.name, restored / second.name))
+        for path in (source, second):
+            target = restored / path.name
+            self.assertEqual(target.read_bytes(), contents)
+            self.assertEqual(target.lstat().st_nlink, 1)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), stat.S_IMODE(before.st_mode))
+            self.assertEqual(int(target.stat().st_mtime), int(before.st_mtime))
+            after = path.lstat()
+            for key in ("st_dev", "st_ino", "st_nlink", "st_mode", "st_size",
+                        "st_mtime_ns", "st_ctime_ns"):
+                self.assertEqual(getattr(after, key), getattr(before, key))
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertTrue(os.path.samefile(source, second))
+
+    def test_source_hardlink_counterpart_outside_payload_is_never_accessed(self):
+        source = self.output / "static/index.html"
+        outside = self.root / "unselected-counterpart.bin"
+        outside.hardlink_to(source)
+        before = outside.lstat()
+        original_open, original_os_open = Path.open, os.open
+        original_lstat, original_iterdir = Path.lstat, Path.iterdir
+
+        def guard(operation):
+            def checked(path, *args, **kwargs):
+                self.assertNotEqual(Path(path), outside, "No lookup of an unselected inode name")
+                return operation(path, *args, **kwargs)
+            return checked
+
+        with patch.object(Path, "open", guard(original_open)), \
+                patch("os.open", side_effect=guard(original_os_open)), \
+                patch.object(Path, "lstat", guard(original_lstat)), \
+                patch.object(Path, "iterdir", guard(original_iterdir)):
+            try:
+                package = self.package_fixture()
+            except SystemExit as error:
+                self.fail(f"Expected selected-path-only materialization, got: {error}")
+            self.assertEqual(self.report["source_regular_files_with_multiple_links"], 1)
+            self.verify()
+        with tarfile.open(package, "r:") as archive:
+            self.assertNotIn(outside.name, archive.getnames())
+        self.assertTrue(os.path.samefile(source, outside))
+        for key in ("st_dev", "st_ino", "st_nlink", "st_mode", "st_size",
+                    "st_mtime_ns", "st_ctime_ns"):
+            self.assertEqual(getattr(outside.lstat(), key), getattr(before, key))
+
+    def test_materialized_size_limit_counts_each_selected_path_not_inodes(self):
+        source = self.output / "static/large.bin"
+        with source.open("wb") as stream:
+            stream.truncate(32 * 1024**2 + 1)
+        (source.parent / "second-large.bin").hardlink_to(source)
+        with self.assertRaisesRegex(SystemExit, "64 MiB"):
+            self.execute("pack")
+        self.assertFalse((self.root / "upload").exists())
+        self.assertFalse((self.root / "job-output").exists())
+
+    @staticmethod
+    def changed_stat(info, **changes):
+        fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                  "st_mtime", "st_mtime_ns", "st_ctime_ns")
+        return SimpleNamespace(**({k: getattr(info, k) for k in fields} | changes))
+
+    def test_regular_source_invalid_link_counts_fail_before_open(self):
+        source = self.output / "static/index.html"
+        original_lstat, original_open = Path.lstat, os.open
+        for value in (0, -1, True, 1.5):
+            def metadata(path, *args, **kwargs):
+                info = original_lstat(path, *args, **kwargs)
+                return self.changed_stat(info, st_nlink=value) if path == source else info
+
+            def guarded_open(path, *args, **kwargs):
+                self.assertNotEqual(Path(path), source)
+                return original_open(path, *args, **kwargs)
+
+            with self.subTest(nlink=value), patch.object(Path, "lstat", metadata), \
+                    patch("os.open", side_effect=guarded_open), self.assertRaises(SystemExit):
+                self.execute("pack")
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+
+    def test_regular_source_fstat_identity_and_metadata_must_stay_stable(self):
+        source = self.output / "static/index.html"
+        info = source.lstat()
+        real_fstat = os.fstat
+        changes = {"st_nlink": 2, "st_dev": info.st_dev + 1, "st_ino": info.st_ino + 1,
+                   "st_mode": stat.S_IFLNK | 0o777, "st_size": info.st_size + 1,
+                   "st_mtime_ns": info.st_mtime_ns + 1, "st_ctime_ns": info.st_ctime_ns + 1}
+        for phase in (1, 2, 3, 4):  # Before/after inventory hashing and package reading.
+            for field, value in changes.items():
+                calls = 0
+
+                def changed(fd):
+                    nonlocal calls
+                    current = real_fstat(fd)
+                    if (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino):
+                        calls += 1
+                        if calls == phase:
+                            return self.changed_stat(current, **{field: value})
+                    return current
+
+                label = f"{phase}-{field}"
+                output = self.root / f"job-{label}"
+                with self.subTest(phase=phase, field=field), \
+                        patch("os.fstat", side_effect=changed), self.assertRaises(SystemExit):
+                    self.execute("pack", {"BUNDLE_DIR": str(self.root / label),
+                                          "GITHUB_OUTPUT": str(output)})
+                self.assertFalse(output.exists(), "No usable hash after source instability")
+
+    def test_regular_source_replacement_by_symlink_or_new_inode_fails_before_read(self):
+        source = self.output / "static/index.html"
+        saved = source.parent / "original.bin"
+        outside = self.root / "unselected.bin"
+        outside.write_bytes(b"never read by packaging")
+        real_open = os.open
+        contents = source.read_bytes()
+        for symlink in (True, False):
+            def replace(path, *args, **kwargs):
+                if Path(path) == source:
+                    source.rename(saved)
+                    if symlink:
+                        os.symlink(outside, source)
+                    else:
+                        source.write_bytes(contents)
+                return real_open(path, *args, **kwargs)
+
+            with self.subTest(symlink=symlink), patch("os.open", side_effect=replace), \
+                    self.assertRaises(SystemExit):
+                self.execute("pack")
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+            source.unlink()
+            saved.rename(source)
+
+    def test_regular_source_content_changes_during_read_or_packaging_abort(self):
+        source = self.output / "static/index.html"
+        contents = source.read_bytes()
+        real_fstat, real_addfile = os.fstat, tarfile.TarFile.addfile
+        for phase in ("read", "pack"):
+            changed = False
+            calls = 0
+
+            def mutate():
+                nonlocal changed
+                times = source.stat()
+                source.write_bytes(b"X" * len(contents))
+                os.utime(source, ns=(times.st_atime_ns, times.st_mtime_ns))
+                changed = True
+
+            def after_read(fd):
+                nonlocal calls
+                if os.path.samestat(real_fstat(fd), source.lstat()):
+                    calls += 1
+                    if phase == "read" and calls == 2:
+                        mutate()
+                return real_fstat(fd)
+
+            def packaging(archive, member, stream=None):
+                result = real_addfile(archive, member, stream)
+                if phase == "pack" and member.name == "output/static/index.html":
+                    mutate()
+                return result
+
+            output = self.root / f"job-{phase}"
+            with self.subTest(phase=phase), patch("os.fstat", side_effect=after_read), \
+                    patch.object(tarfile.TarFile, "addfile", packaging), \
+                    self.assertRaises(SystemExit):
+                self.execute("pack", {"BUNDLE_DIR": str(self.root / phase),
+                                      "GITHUB_OUTPUT": str(output)})
+            self.assertTrue(changed)
+            self.assertFalse(output.exists())
+            source.write_bytes(contents)
+
+    def test_consumer_rejects_tar_hardlink_with_matching_declared_inventory(self):
+        self.package_fixture()
+        name, target = "output/static/index.html", "output/config.json"
+
+        def adulterate(entries):
+            for member, data in entries:
+                if member.name == name:
+                    member.type, member.linkname = tarfile.LNKTYPE, target
+                if member.name == "receipt.json":
+                    receipt = json.loads(data)
+                    for entry in receipt["entries"]:
+                        if entry["path"] == name:
+                            entry.update(type="hardlink", size=0, sha256=None, target=target)
+                    data = json.dumps(receipt).encode()
+                yield member, data
+
+        self.rewrite_package(lambda entries: list(adulterate(entries)))
+        with self.assertRaisesRegex(SystemExit, "Unsupported archive link"):
+            self.verify()
+        self.assertFalse((self.root / "verified").exists())
+
+    def test_consumer_rejects_reconstructed_regular_file_with_multiple_links(self):
+        self.package_fixture()
+        restored = self.root / "verified/output/static/index.html"
+        real_chmod = os.chmod
+
+        def link_after_write(path, mode):
+            real_chmod(path, mode)
+            if Path(path) == restored:
+                (self.root / "outside-restored.bin").hardlink_to(path)
+
+        with patch("os.chmod", side_effect=link_after_write), self.assertRaises(SystemExit):
+            self.verify()
+        self.assertEqual(restored.lstat().st_nlink, 2)
+
     def test_internal_func_alias_round_trip_without_traversal_or_source_changes(self):
         functions = self.output / "functions"
         target = functions / "canonical.func"
@@ -653,7 +888,7 @@ class TestProductionBundleTransfer(unittest.TestCase):
             stream = archive.extractfile("receipt.json")
             assert stream is not None
             receipt = json.load(stream)
-            self.assertEqual(receipt["version"], 3)
+            self.assertEqual(receipt["version"], 4)
             member = archive.getmember("output/functions/nested/alias.func")
             self.assertTrue(member.issym())
             self.assertEqual(member.linkname, "../canonical.func")
@@ -726,7 +961,7 @@ class TestProductionBundleTransfer(unittest.TestCase):
             self.assertFalse((self.root / "upload").exists())
             self.assertFalse((self.root / "job-output").exists())
 
-    def test_producer_rejects_other_symlinks_hardlinks_and_special_types(self):
+    def test_producer_rejects_other_symlinks_and_special_types(self):
         target = self.output / "functions/real.func"
         target.mkdir(parents=True)
         moved = self.output / "static/real-functions"
@@ -746,8 +981,13 @@ class TestProductionBundleTransfer(unittest.TestCase):
                 moved.rename(target.parent)
         code = target / "code.bin"
         code.write_bytes(b"fixture")
-        (target / "hardlink.bin").hardlink_to(code)
-        with self.assertRaises(SystemExit):
+        original_lstat = Path.lstat
+
+        def special(path, *args, **kwargs):
+            info = original_lstat(path, *args, **kwargs)
+            return self.changed_stat(info, st_mode=stat.S_IFIFO | 0o600) if path == code else info
+
+        with patch.object(Path, "lstat", special), self.assertRaises(SystemExit):
             self.execute("pack")
         self.assertFalse((self.root / "upload").exists())
 
@@ -853,10 +1093,11 @@ class TestProductionBundleTransfer(unittest.TestCase):
             self.verify()
 
     def assert_selection(self, receipt, state):
-        self.assertEqual(receipt["version"], 3)
+        self.assertEqual(receipt["version"], 4)
         self.assertEqual(set(receipt), {"version", "provenance", "selection", "entries"})
         self.assertEqual(receipt["selection"], {
             "source": ".vercel/output", "payload": "output",
+            "regular_files": "independent-bytes",
             "diagnostics": {"path": "output/diagnostics", "state": state,
                             "reason": "auxiliary diagnostics excluded for privacy"},
         })
@@ -919,6 +1160,7 @@ class TestProductionBundleTransfer(unittest.TestCase):
 
     def test_absent_diagnostics_is_recorded_without_observed_omission(self):
         package = self.package_fixture()
+        self.assertEqual(self.report["source_regular_files_with_multiple_links"], 0)
         with tarfile.open(package, "r:") as archive:
             receipt = json.loads(archive.extractfile("receipt.json").read())
         self.assert_selection(receipt, "absent")
@@ -999,7 +1241,11 @@ class TestProductionBundleTransfer(unittest.TestCase):
             invalid_selections.append(selection | {"diagnostics": selection["diagnostics"] |
                                                    {field: value}})
         cases = [receipt | {"selection": value} for value in invalid_selections]
-        cases += [receipt | {"version": value} for value in (1, 2, 4, True, "3")]
+        cases += [receipt | {"version": value} for value in (1, 2, 3, 5, True, "4")]
+        cases += [receipt | {"selection": selection | {"regular_files": value}}
+                  for value in (None, True, [], "hard-links", "independent-bytes ")]
+        cases += [receipt | {"selection": {k: v for k, v in selection.items()
+                                          if k != "regular_files"}}]
         cases += [receipt | {"omissions": []},
                   {k: v for k, v in receipt.items() if k != "selection"}]
         original = package.read_bytes()
