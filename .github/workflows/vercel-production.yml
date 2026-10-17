@@ -220,6 +220,32 @@ jobs:
               with path.open("rb") as stream:
                   return digest(stream)
 
+          def regular_state(info):
+              require(stat.S_ISREG(info.st_mode) and type(info.st_nlink) is int
+                      and info.st_nlink > 0 and info.st_dev >= 0 and info.st_ino > 0
+                      and info.st_size >= 0, "Invalid regular file metadata")
+              return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+                      info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+          def regular_bytes(path, expected):
+              require(regular_state(path.lstat()) == expected, "Selected regular file changed")
+              flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                       | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+              try:
+                  fd = os.open(path, flags)
+              except OSError:
+                  raise SystemExit("Cannot open selected regular file") from None
+              with os.fdopen(fd, "rb") as stream:
+                  require(regular_state(os.fstat(stream.fileno())) == expected
+                          and regular_state(path.lstat()) == expected,
+                          "Selected regular file changed before reading")
+                  data = stream.read(expected[4] + 1)
+                  require(len(data) == expected[4]
+                          and regular_state(os.fstat(stream.fileno())) == expected
+                          and regular_state(path.lstat()) == expected,
+                          "Selected regular file changed while reading")
+              return data
+
           def number(name):
               value = os.environ.get(name, "")
               require(re.fullmatch(r"[1-9][0-9]*", value), f"Invalid {name}")
@@ -277,6 +303,7 @@ jobs:
 
           def inventory(root, *, omit_diagnostics=False):
               entries = []
+              file_states = {}  # Per-path stability checks only; never serialized or grouped by inode.
               total = 0
               diagnostics_state = "absent"
 
@@ -301,7 +328,8 @@ jobs:
                   directory = stat.S_ISDIR(info.st_mode)
                   require(alias or directory or stat.S_ISREG(info.st_mode),
                           f"Unsupported file type: {name}")
-                  require(directory or info.st_nlink == 1, f"Unsupported hard link: {name}")
+                  require(directory or (not alias and omit_diagnostics) or info.st_nlink == 1,
+                          f"Unsupported hard link: {name}")
                   kind = "func-alias" if alias else "directory" if directory else "file"
                   header = tarfile.TarInfo(name)
                   header.type, header.linkname = TAR_TYPES[kind], target if alias else ""
@@ -313,9 +341,13 @@ jobs:
                   total += size
                   require(total <= MAX_BYTES and len(entries) < MAX_ENTRIES,
                           "Output exceeds the 64 MiB / 4096 entry transfer limit")
+                  content_hash = None
+                  if kind == "file":
+                      file_states[name] = regular_state(info)
+                      content_hash = hashlib.sha256(regular_bytes(path, file_states[name])).hexdigest()
                   entry = {"path": name, "type": kind, "mode": 0o777 if alias else mode,
                            "size": size, "mtime": 0 if alias else int(info.st_mtime),
-                           "sha256": None if directory or alias else file_digest(path)}
+                           "sha256": content_hash}
                   if alias:
                       entry["target"] = target
                   entries.append(entry)
@@ -327,7 +359,7 @@ jobs:
               validate_aliases(entries)
               require(any(e["path"] == "output/config.json" and e["type"] == "file"
                           for e in entries), "Missing output/config.json")
-              return entries, diagnostics_state
+              return entries, diagnostics_state, file_states
 
           def json_object(pairs):
               result = {}
@@ -349,6 +381,7 @@ jobs:
           }
           selection = {
               "source": ".vercel/output", "payload": "output",
+              "regular_files": "independent-bytes",
               "diagnostics": {"path": "output/diagnostics", "state": "absent",
                               "reason": "auxiliary diagnostics excluded for privacy"},
           }
@@ -364,9 +397,9 @@ jobs:
                       "Public settings changed after build")
               root = workspace / ".vercel/output"
               require(not (workspace / ".vercel").is_symlink(), "Unsupported settings-directory symlink")
-              entries, diagnostics_state = inventory(root, omit_diagnostics=True)
+              entries, diagnostics_state, file_states = inventory(root, omit_diagnostics=True)
               selection["diagnostics"]["state"] = diagnostics_state
-              receipt = json.dumps({"version": 3, "provenance": provenance,
+              receipt = json.dumps({"version": 4, "provenance": provenance,
                                     "selection": selection, "entries": entries},
                                    sort_keys=True, separators=(",", ":")).encode()
               require(len(receipt) <= MAX_RECEIPT, "Receipt exceeds 2 MiB")
@@ -383,15 +416,20 @@ jobs:
                       if entry["type"] != "file":
                           archive.addfile(header)
                       else:
-                          with (root.parent / entry["path"]).open("rb") as stream:
-                              archive.addfile(header, stream)
+                          data = regular_bytes(root.parent / entry["path"], file_states[entry["path"]])
+                          require(hashlib.sha256(data).hexdigest() == entry["sha256"],
+                                  "Selected regular file content changed")
+                          archive.addfile(header, io.BytesIO(data))
               require(package.stat().st_size <= MAX_PACKAGE, "Package exceeds 80 MiB")
-              require(inventory(root, omit_diagnostics=True) == (entries, diagnostics_state),
+              require(inventory(root, omit_diagnostics=True)
+                      == (entries, diagnostics_state, file_states),
                       "Selected output changed while packaging")
               package_hash = file_digest(package)
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                   output.write(f"package_sha256={package_hash}\n")
               print(json.dumps({"provenance": provenance, "selection": selection, "entries": entries,
+                                "source_regular_files_with_multiple_links": sum(
+                                    state[3] > 1 for state in file_states.values()),
                                 "payload_links": sum(e["type"] == "func-alias" for e in entries),
                                 "bytes": sum(e["size"] for e in entries),
                                 "package_bytes": package.stat().st_size, "package_sha256": package_hash}))
@@ -479,7 +517,7 @@ jobs:
                   receipt = json.loads(archive.extractfile(header).read(), object_pairs_hook=json_object)
                   require(isinstance(receipt, dict)
                           and set(receipt) == {"version", "provenance", "selection", "entries"}
-                          and type(receipt["version"]) is int and receipt["version"] == 3
+                          and type(receipt["version"]) is int and receipt["version"] == 4
                           and json.dumps(receipt["provenance"], sort_keys=True)
                           == json.dumps(provenance, sort_keys=True), "Receipt provenance mismatch")
                   require(isinstance(receipt["selection"], dict)
@@ -554,7 +592,7 @@ jobs:
                       target = destination / entry["path"]
                       os.chmod(target, entry["mode"])
                       os.utime(target, (entry["mtime"], entry["mtime"]))
-              require(inventory(destination / "output") == (entries, "absent"),
+              require(inventory(destination / "output")[:2] == (entries, "absent"),
                       "Restored content or metadata mismatch")
               print(json.dumps({"verified_payload": provenance, "selection": selection,
                                 "artifact_id": artifact_id,

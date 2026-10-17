@@ -185,12 +185,12 @@ The accepted 2F-A experiment must not be rerun to stand in for a future transfer
 The producer retains the exact CI gate, first eleven steps, pins, Python 3.13, Node 22,
 Vercel CLI 50.39.0, public settings hash, and runner-side regeneration. After its build,
 a standard-library Python script selects a payload from **only** `.vercel/output`.
-It writes one uncompressed USTAR `production-bundle.tar`, containing version 3 `receipt.json`
+It writes one uncompressed USTAR `production-bundle.tar`, containing version 4 `receipt.json`
 and the selected `output/` tree, not a complete copy of the source output.
 It does not package the workspace, `.vercel/project.json`, global config, or auth caches.
 
 The selected payload accepts regular files, directories, and the narrowly defined internal
-`.func` aliases below. All other symlinks, all hard links and special types remain rejected;
+`.func` aliases below. All other symlinks, TAR hard-link members and special types remain rejected;
 none are silently followed, removed, or flattened. Unsupported topology is a failure requiring
 review, not an invitation to change
 the output until it passes. Top-level selected entries are limited to `config.json`,
@@ -212,7 +212,39 @@ room for TAR headers/padding; they do **not** prove current free storage availab
 Vercel acceptance. Upload uses the existing CI `upload-artifact` pin, a run/attempt-specific
 name, `if-no-files-found:error`, `overwrite:false`, and `retention-days:1`.
 
-### Deliberate diagnostics omission — selection unchanged in receipt version 3
+### Regular source files — independent bytes, receipt version 4
+
+Each selected regular source path is materialized as an independent USTAR `REGTYPE` member
+with its complete bytes, size, SHA-256, mode and whole-second mtime. A positive source `st_nlink`
+may exceed one; the payload neither preserves nor certifies the source hard-link topology.
+The producer never searches for other inode names, groups inodes, deduplicates content, or
+opens an unselected counterpart. That counterpart need not be inside the payload. Byte limits
+are charged per selected path: two paths to the same inode consume twice their logical size.
+No source entry is removed, replaced, relinked or written by this normalization.
+
+Before reading, the producer compares `lstat` and descriptor `fstat`: regular type, positive
+integer link count, device/inode identity, mode, size and nanosecond mtime/ctime. Reads are
+bounded by the expected size plus one byte, with no-follow/nonblocking flags where available;
+identity and metadata are checked before any descriptor bytes are read and again afterward.
+It retains only transient per-path snapshots, not inode groups or serialized inode metadata.
+Packaging reopens and rechecks each selected path, compares its bytes to the inventoried hash,
+and rechecks the complete selected inventory and snapshots before emitting a usable TAR hash.
+These are bounded stability checks, not an atomic transaction over the source filesystem;
+read access times are not preserved or certified.
+
+The fixed selection field `"regular_files":"independent-bytes"` declares representation,
+not an observed source topology. The producer's separate output field
+`source_regular_files_with_multiple_links` counts selected regular source paths observed with
+`st_nlink > 1`, including zero when none exist. `payload_links` still counts only `.func`
+symlink aliases. Individual `file` entry fields do not change. The consumer accepts only
+receipt v4 with the exact selection, rejects every TAR `LNKTYPE` even with an internal target,
+never calls `os.link`, and rejects restored regular files whose `st_nlink` is not exactly one.
+
+Regular type does **not** certify sanitized or publicly suitable content. Fixtures do not
+reconstruct the link count, contents or counterpart of the entry rejected in run `39068927418`.
+Real transfer, quota, public suitability, general portability and Vercel acceptance remain pending.
+
+### Deliberate diagnostics omission — retained in receipt version 4
 
 The only producer exclusion is `.vercel/output/diagnostics`, represented as `output/diagnostics`.
 Before omitting it, the producer uses `lstat` and requires a real directory with no special
@@ -221,7 +253,7 @@ No descendants are traversed, read, hashed, printed, or copied; their links, typ
 are **not inspected or certified**. The source output is never deleted or modified.
 `output/static/diagnostics` is not this exception; other unknown top-level entries still fail.
 
-The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 3.
+The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 4.
 Earlier versions are rejected, not interpreted with speculative compatibility.
 Its fixed selection declaration is:
 
@@ -229,6 +261,7 @@ Its fixed selection declaration is:
 {
   "source": ".vercel/output",
   "payload": "output",
+  "regular_files": "independent-bytes",
   "diagnostics": {
     "path": "output/diagnostics",
     "state": "omitted",
@@ -254,7 +287,7 @@ Fixtures do not reconstruct the type or contents of the historical `output/diagn
 in run `38988199700`; those remain unknown. Quota, hosted transfer, portability and Vercel
 acceptance remain separate, unproven gates.
 
-### Internal .func aliases — receipt version 3
+### Internal .func aliases — retained in receipt version 4
 
 The fixed CLI can [write relative function aliases instead of duplicate functions](https://github.com/vercel/vercel/blob/26539cfdb2971a9c40f1fb7cd22a152b92161164/packages/cli/src/util/build/write-build-result.ts#L528-L554).
 This format accepts a symlink only below `output/functions`, with a name ending in `.func`,
@@ -263,7 +296,7 @@ inside `output/functions`. Target text is printable POSIX ASCII, at most USTAR's
 absolute paths, backslashes, drive prefixes and redundant components are rejected before any
 lookup based on the target. Validation uses the separately inventoried real tree, not filesystem
 resolution through aliases. Missing/file targets, symbolic intermediate components, chains,
-cycles and any member below an alias fail before extraction. Hard links remain unsupported.
+cycles and any member below an alias fail before extraction. TAR hard links remain unsupported.
 
 The producer uses `lstat` and `readlink`, never walks or opens an alias, and leaves the source
 unchanged. A `func-alias` inventory entry has exactly the ordinary fields plus `target` (the
@@ -272,7 +305,7 @@ link permissions and timestamps are not preserved or certified. USTAR stores a s
 header, not duplicated function content. File/directory entry schemas remain unchanged.
 The complete selected inventory, including link text, is rechecked after packaging.
 
-The consumer validates every member and the exact v3 inventory before creating its destination.
+The consumer validates every member and the exact v4 inventory before creating its destination.
 It materializes real files/directories first, then only validated aliases. It restores metadata
 on real entries only, never runs `chmod`/`utime` through a link, and compares alias text without
 traversal afterward. `payload_links` counts these selected aliases, not links in omitted diagnostics.
@@ -336,7 +369,9 @@ Local validation executes the actual inline packaging/verification code on tiny 
 fixtures and mocked GitHub GETs, including tampering and extraction-boundary negatives.
 It does not build, regenerate exports, install dependencies, run the CLI, transfer a real
 artifact, or certify Linux/Python 3.13 from auxiliary Windows/Python 3.11 results. The alias
-round-trip here uses native Windows symlinks (not mocked links); GitHub metadata remains mocked.
+round-trips here use native Windows symlinks and hard links, not mocked link topology.
+Fault-injection tests mock metadata or mutate temporary fixtures to exercise instability;
+GitHub metadata remains mocked. These are not Linux or hosted-transfer proofs.
 
 The observed `tar@7.5.7` warning remains an unresolved gate for any future process with a
 Vercel token. This unit does not update `vercel@50.39.0`, dependencies or pins. The Environment
