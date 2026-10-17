@@ -605,8 +605,255 @@ class TestProductionBundleTransfer(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(data) if member.isfile() else None)
         self.digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def test_internal_func_alias_round_trip_without_traversal_or_source_changes(self):
+        functions = self.output / "functions"
+        target = functions / "canonical.func"
+        target.mkdir(parents=True)
+        code = target / "code.bin"
+        code.write_bytes(b"synthetic function bytes, never executed")
+        alias = functions / "nested/alias.func"
+        alias.parent.mkdir()
+        os.symlink("../canonical.func", alias, target_is_directory=True)
+        sources = (functions, target, code, alias.parent, alias)
+        before = [(p.lstat().st_mode, p.lstat().st_size, p.lstat().st_mtime_ns) for p in sources]
+        original_open, original_iterdir = Path.open, Path.iterdir
+        original_chmod, original_utime = os.chmod, os.utime
+        restored_alias = self.root / "verified/output/functions/nested/alias.func"
+
+        def no_alias_access(path):
+            for link in (alias, restored_alias):
+                self.assertFalse(path == link or link in path.parents, "Do not traverse aliases")
+
+        def guarded_open(path, *args, **kwargs):
+            no_alias_access(path)
+            return original_open(path, *args, **kwargs)
+
+        def guarded_iterdir(path):
+            no_alias_access(path)
+            return original_iterdir(path)
+
+        def guarded_chmod(path, mode):
+            no_alias_access(Path(path))
+            original_chmod(path, mode)
+
+        def guarded_utime(path, times):
+            no_alias_access(Path(path))
+            original_utime(path, times)
+
+        with patch.object(Path, "open", guarded_open), \
+                patch.object(Path, "iterdir", guarded_iterdir), \
+                patch("os.chmod", side_effect=guarded_chmod), \
+                patch("os.utime", side_effect=guarded_utime):
+            try:
+                package = self.package_fixture()
+            except SystemExit as error:
+                self.fail(f"Expected internal .func alias packaging, got: {error}")
+            self.verify()
+        with tarfile.open(package, "r:") as archive:
+            stream = archive.extractfile("receipt.json")
+            assert stream is not None
+            receipt = json.load(stream)
+            self.assertEqual(receipt["version"], 3)
+            member = archive.getmember("output/functions/nested/alias.func")
+            self.assertTrue(member.issym())
+            self.assertEqual(member.linkname, "../canonical.func")
+            self.assertFalse(any(n.startswith(member.name + "/") for n in archive.getnames()))
+            entry = next(e for e in receipt["entries"] if e["path"] == member.name)
+            self.assertEqual(entry, {
+                "path": member.name, "type": "func-alias", "target": "../canonical.func",
+                "mode": 0o777, "size": 0, "mtime": 0, "sha256": None,
+            })
+        self.assertTrue(restored_alias.is_symlink())
+        self.assertEqual(os.readlink(restored_alias), "../canonical.func")
+        self.assertEqual(before, [(p.lstat().st_mode, p.lstat().st_size, p.lstat().st_mtime_ns)
+                                  for p in sources])
+        restored_code = self.root / "verified/output/functions/canonical.func/code.bin"
+        self.assertEqual(restored_code.read_bytes(), code.read_bytes())
+        self.assertEqual(stat.S_IMODE(restored_code.stat().st_mode),
+                         stat.S_IMODE(code.stat().st_mode))
+        self.assertEqual(int(restored_code.stat().st_mtime), int(code.stat().st_mtime))
+
+    def func_alias_fixture(self):
+        target = self.output / "functions/real.func"
+        target.mkdir(parents=True)
+        (target / "code.bin").write_bytes(b"synthetic function, never executed")
+        alias = target.parent / "alias.func"
+        os.symlink("real.func", alias, target_is_directory=True)
+        return alias, target
+
+    def test_producer_rejects_unsafe_func_alias_targets_before_packaging(self):
+        alias, target = self.func_alias_fixture()
+        (target.parent / "file.func").write_bytes(b"not a directory")
+        cases = ("/absolute.func", "../../outside.func", "../diagnostics", "../static",
+                 "missing.func", "file.func", "alias.func", "./real.func",
+                 "real.func/../real.func", "real.func/", "C:/outside.func",
+                 "real\\func", "bad\n.func", "x" * 96 + ".func")
+        original_lstat = Path.lstat
+
+        def confined_lstat(path, *args, **kwargs):
+            self.assertTrue(path == self.workspace or self.workspace in path.parents)
+            return original_lstat(path, *args, **kwargs)
+
+        for value in cases:
+            alias.unlink()
+            os.symlink(value, alias, target_is_directory=True)
+            with self.subTest(target=value), patch.object(Path, "lstat", confined_lstat), \
+                    self.assertRaises(SystemExit):
+                self.execute("pack")
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+
+    def test_producer_rejects_alias_chains_cycles_and_symbolic_intermediate_components(self):
+        alias, target = self.func_alias_fixture()
+        (target / "nested.func").mkdir()
+        bridge = target.parent / "bridge.func"
+        original_lstat = Path.lstat
+
+        def no_bridge_traversal(path, *args, **kwargs):
+            self.assertNotIn(bridge, path.parents)
+            return original_lstat(path, *args, **kwargs)
+
+        for link, bridge_link in (("bridge.func", "real.func"),
+                                  ("bridge.func", "alias.func"),
+                                  ("bridge.func/nested.func", "real.func")):
+            alias.unlink()
+            os.symlink(link, alias, target_is_directory=True)
+            os.symlink(bridge_link, bridge, target_is_directory=True)
+            with self.subTest(target=link, bridge=bridge_link), \
+                    patch.object(Path, "lstat", no_bridge_traversal), self.assertRaises(SystemExit):
+                self.execute("pack")
+            bridge.unlink()
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+
+    def test_producer_rejects_other_symlinks_hardlinks_and_special_types(self):
+        target = self.output / "functions/real.func"
+        target.mkdir(parents=True)
+        moved = self.output / "static/real-functions"
+        for relative in ("static/alias.func", "functions/alias.txt", "functions"):
+            alias = self.output / relative
+            if relative == "functions":
+                # A symbolic functions root must not be used as a traversal entry point.
+                target.parent.rename(moved)
+                os.symlink("static/real-functions", alias, target_is_directory=True)
+            else:
+                os.symlink("real.func", alias, target_is_directory=True)
+            with self.subTest(path=relative), self.assertRaises(SystemExit):
+                self.execute("pack")
+            self.assertFalse((self.root / "upload").exists())
+            alias.unlink()
+            if relative == "functions":
+                moved.rename(target.parent)
+        code = target / "code.bin"
+        code.write_bytes(b"fixture")
+        (target / "hardlink.bin").hardlink_to(code)
+        with self.assertRaises(SystemExit):
+            self.execute("pack")
+        self.assertFalse((self.root / "upload").exists())
+
+    def test_consumer_rejects_adulterated_alias_metadata_and_targets_before_extraction(self):
+        alias, target = self.func_alias_fixture()
+        os.symlink("real.func", target.parent / "second.func", target_is_directory=True)
+        (target.parent / "file.func").write_bytes(b"not a directory")
+        package = self.package_fixture()
+        original = package.read_bytes()
+        cases = [("target", value) for value in (
+            "/absolute.func", "../../outside.func", "../diagnostics", "../static",
+            "missing.func", "file.func", "alias.func", "second.func",
+            "second.func/nested.func", "./real.func", "real.func/../real.func",
+        )] + [("mode", 0o600), ("mtime", 1), ("sha256", "a" * 64),
+             ("target_only_in_header", "missing.func"), ("extra", True), ("cycle", True)]
+        for field, value in cases:
+            package.write_bytes(original)
+
+            def change(entries):
+                for member, data in entries:
+                    if member.name == "output/functions/alias.func":
+                        if field in {"target", "target_only_in_header"}:
+                            member.linkname = value
+                        elif field in {"mode", "mtime"}:
+                            setattr(member, field, value)
+                        elif field == "cycle":
+                            member.linkname = "second.func"
+                    if field == "cycle" and member.name == "output/functions/second.func":
+                        member.linkname = "alias.func"
+                    if member.name == "receipt.json":
+                        receipt = json.loads(data)
+                        for entry in receipt["entries"]:
+                            if entry["path"] == "output/functions/alias.func":
+                                if field == "cycle":
+                                    entry["target"] = "second.func"
+                                elif field != "target_only_in_header":
+                                    entry[field] = value
+                            if field == "cycle" and entry["path"] == "output/functions/second.func":
+                                entry["target"] = "alias.func"
+                        data = json.dumps(receipt).encode()
+                    yield member, data
+
+            self.rewrite_package(lambda entries: list(change(entries)))
+            with self.subTest(field=field, value=value), self.assertRaises(SystemExit):
+                self.verify()
+            self.assertFalse((self.root / "verified").exists())
+        self.assertEqual(os.readlink(alias), "real.func")
+
+    def test_consumer_rejects_members_under_alias_even_with_consistent_inventory(self):
+        self.func_alias_fixture()
+        self.package_fixture()
+
+        def add_child(entries):
+            member = tarfile.TarInfo("output/functions/alias.func/child.bin")
+            data = b"must not be extracted through an alias"
+            for header, contents in entries:
+                if header.name == "receipt.json":
+                    receipt = json.loads(contents)
+                    receipt["entries"].append({
+                        "path": member.name, "type": "file", "mode": member.mode,
+                        "size": len(data), "mtime": 0, "sha256": hashlib.sha256(data).hexdigest(),
+                    })
+                    contents = json.dumps(receipt).encode()
+                yield header, contents
+            yield member, data
+
+        self.rewrite_package(lambda entries: list(add_child(entries)))
+        with self.assertRaises(SystemExit):
+            self.verify()
+        self.assertFalse((self.root / "verified").exists())
+
+    def test_consumer_rejects_ustar_unrepresentable_alias_target(self):
+        self.func_alias_fixture()
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            entries = []
+            for member in archive.getmembers():
+                data = b""
+                if member.isfile():
+                    stream = archive.extractfile(member)
+                    assert stream is not None
+                    data = stream.read()
+                entries.append((deepcopy(member), data))
+        with tarfile.open(package, "w:", format=tarfile.PAX_FORMAT) as archive:
+            for member, data in entries:
+                if member.issym():
+                    member.linkname = "x" * 96 + ".func"
+                archive.addfile(member, io.BytesIO(data) if member.isfile() else None)
+        self.digest = hashlib.sha256(package.read_bytes()).hexdigest()
+        with self.assertRaises(SystemExit):
+            self.verify()
+        self.assertFalse((self.root / "verified").exists())
+
+    def test_verifier_detects_changed_alias_text_after_materialization(self):
+        self.func_alias_fixture()
+        self.package_fixture()
+        original_symlink = os.symlink
+
+        def corrupt(link, path, **kwargs):
+            original_symlink("missing.func", path, **kwargs)
+
+        with patch("os.symlink", side_effect=corrupt), self.assertRaises(SystemExit):
+            self.verify()
+
     def assert_selection(self, receipt, state):
-        self.assertEqual(receipt["version"], 2)
+        self.assertEqual(receipt["version"], 3)
         self.assertEqual(set(receipt), {"version", "provenance", "selection", "entries"})
         self.assertEqual(receipt["selection"], {
             "source": ".vercel/output", "payload": "output",
@@ -752,7 +999,7 @@ class TestProductionBundleTransfer(unittest.TestCase):
             invalid_selections.append(selection | {"diagnostics": selection["diagnostics"] |
                                                    {field: value}})
         cases = [receipt | {"selection": value} for value in invalid_selections]
-        cases += [receipt | {"version": value} for value in (1, 3, True, "2")]
+        cases += [receipt | {"version": value} for value in (1, 2, 4, True, "3")]
         cases += [receipt | {"omissions": []},
                   {k: v for k, v in receipt.items() if k != "selection"}]
         original = package.read_bytes()

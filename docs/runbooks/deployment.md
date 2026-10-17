@@ -185,13 +185,14 @@ The accepted 2F-A experiment must not be rerun to stand in for a future transfer
 The producer retains the exact CI gate, first eleven steps, pins, Python 3.13, Node 22,
 Vercel CLI 50.39.0, public settings hash, and runner-side regeneration. After its build,
 a standard-library Python script selects a payload from **only** `.vercel/output`.
-It writes one uncompressed USTAR `production-bundle.tar`, containing version 2 `receipt.json`
+It writes one uncompressed USTAR `production-bundle.tar`, containing version 3 `receipt.json`
 and the selected `output/` tree, not a complete copy of the source output.
 It does not package the workspace, `.vercel/project.json`, global config, or auth caches.
 
-The selected payload accepts regular files and directories only. It explicitly rejects **all**
-symlinks and hard links in that payload, including internal links: none are silently followed,
-removed, or flattened. Unsupported topology is a failure requiring review, not an invitation to change
+The selected payload accepts regular files, directories, and the narrowly defined internal
+`.func` aliases below. All other symlinks, all hard links and special types remain rejected;
+none are silently followed, removed, or flattened. Unsupported topology is a failure requiring
+review, not an invitation to change
 the output until it passes. Top-level selected entries are limited to `config.json`,
 `builds.json`, `static/`, and `functions/`; `output/config.json` is required. Other entries
 (including output caches), authentication/environment filenames, special permission bits,
@@ -211,7 +212,7 @@ room for TAR headers/padding; they do **not** prove current free storage availab
 Vercel acceptance. Upload uses the existing CI `upload-artifact` pin, a run/attempt-specific
 name, `if-no-files-found:error`, `overwrite:false`, and `retention-days:1`.
 
-### Deliberate diagnostics omission — receipt version 2
+### Deliberate diagnostics omission — selection unchanged in receipt version 3
 
 The only producer exclusion is `.vercel/output/diagnostics`, represented as `output/diagnostics`.
 Before omitting it, the producer uses `lstat` and requires a real directory with no special
@@ -220,7 +221,8 @@ No descendants are traversed, read, hashed, printed, or copied; their links, typ
 are **not inspected or certified**. The source output is never deleted or modified.
 `output/static/diagnostics` is not this exception; other unknown top-level entries still fail.
 
-The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 2.
+The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 3.
+Earlier versions are rejected, not interpreted with speculative compatibility.
 Its fixed selection declaration is:
 
 ```json
@@ -251,6 +253,34 @@ A new digest describes the selected package, not integrity of the omitted source
 Fixtures do not reconstruct the type or contents of the historical `output/diagnostics` rejected
 in run `38988199700`; those remain unknown. Quota, hosted transfer, portability and Vercel
 acceptance remain separate, unproven gates.
+
+### Internal .func aliases — receipt version 3
+
+The fixed CLI can [write relative function aliases instead of duplicate functions](https://github.com/vercel/vercel/blob/26539cfdb2971a9c40f1fb7cd22a152b92161164/packages/cli/src/util/build/write-build-result.ts#L528-L554).
+This format accepts a symlink only below `output/functions`, with a name ending in `.func`,
+whose canonical relative target resolves lexically to another selected, real `.func` directory
+inside `output/functions`. Target text is printable POSIX ASCII, at most USTAR's 100 bytes;
+absolute paths, backslashes, drive prefixes and redundant components are rejected before any
+lookup based on the target. Validation uses the separately inventoried real tree, not filesystem
+resolution through aliases. Missing/file targets, symbolic intermediate components, chains,
+cycles and any member below an alias fail before extraction. Hard links remain unsupported.
+
+The producer uses `lstat` and `readlink`, never walks or opens an alias, and leaves the source
+unchanged. A `func-alias` inventory entry has exactly the ordinary fields plus `target` (the
+relative link text). It has `size:0`, `sha256:null`, and normalized `mode:511` / `mtime:0`;
+link permissions and timestamps are not preserved or certified. USTAR stores a symbolic-link
+header, not duplicated function content. File/directory entry schemas remain unchanged.
+The complete selected inventory, including link text, is rechecked after packaging.
+
+The consumer validates every member and the exact v3 inventory before creating its destination.
+It materializes real files/directories first, then only validated aliases. It restores metadata
+on real entries only, never runs `chmod`/`utime` through a link, and compares alias text without
+traversal afterward. `payload_links` counts these selected aliases, not links in omitted diagnostics.
+
+The fixture destinations are synthetic. Run `38995667136` identified a rejected
+`output/functions/_global-error.func`, but its historical target is still **UNKNOWN**.
+A future separately authorized run must validate its actual target and abort if it does not fit;
+local GREEN does not certify that historical output, Linux behavior or Vercel acceptance.
 
 ### Same-run consumer and integrity
 
@@ -283,8 +313,8 @@ The download action's digest warning is not treated as a gate. The verifier expl
 aborts if metadata digests differ or the actual TAR does not match `package_sha256`.
 The download directory must contain exactly that regular TAR. All TAR names, types, ownership,
 receipt fields, hierarchy, modes, sizes, mtimes and content hashes are validated **before**
-creating a new extraction directory. No `extractall` is used: only validated regular files
-and directories are materialized, followed by a complete content/metadata comparison of the
+creating a new extraction directory. No `extractall` is used: validated real entries precede
+validated `.func` aliases, followed by a complete content/metadata comparison of the
 selected payload, without applying the producer's omission to the received tree.
 
 ### Required future evidence — not PASS from fixtures
@@ -292,7 +322,8 @@ selected payload, without applying the producer's omission to the received tree.
 A separately authorized hosted transfer experiment must establish:
 
 1. The actual selected payload's file count, byte size, modes and links fit the declared format,
-   and the excluded root entry satisfies its directory/metadata checks without inspecting its contents.
+   including every real target and relative `.func` alias, and the excluded root entry satisfies
+   its directory/metadata checks without inspecting its contents.
 2. The intended artifact contents are appropriate for download from this public repository.
    Filename restrictions and lack of credentials are **not** a secret/content audit.
 3. Shared Actions artifact storage has sufficient free quota; one-day retention is a bound,
@@ -304,7 +335,8 @@ A separately authorized hosted transfer experiment must establish:
 Local validation executes the actual inline packaging/verification code on tiny temporary
 fixtures and mocked GitHub GETs, including tampering and extraction-boundary negatives.
 It does not build, regenerate exports, install dependencies, run the CLI, transfer a real
-artifact, or certify Linux/Python 3.13 from auxiliary Windows/Python 3.11 results.
+artifact, or certify Linux/Python 3.13 from auxiliary Windows/Python 3.11 results. The alias
+round-trip here uses native Windows symlinks (not mocked links); GitHub metadata remains mocked.
 
 The observed `tar@7.5.7` warning remains an unresolved gate for any future process with a
 Vercel token. This unit does not update `vercel@50.39.0`, dependencies or pins. The Environment
