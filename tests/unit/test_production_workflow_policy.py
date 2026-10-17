@@ -605,6 +605,182 @@ class TestProductionBundleTransfer(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(data) if member.isfile() else None)
         self.digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def assert_selection(self, receipt, state):
+        self.assertEqual(receipt["version"], 2)
+        self.assertEqual(set(receipt), {"version", "provenance", "selection", "entries"})
+        self.assertEqual(receipt["selection"], {
+            "source": ".vercel/output", "payload": "output",
+            "diagnostics": {"path": "output/diagnostics", "state": state,
+                            "reason": "auxiliary diagnostics excluded for privacy"},
+        })
+
+    def test_omits_diagnostics_without_accessing_contents_or_changing_source(self):
+        diagnostics = self.output / "diagnostics"
+        private = diagnostics / "private"
+        private.mkdir(parents=True)
+        trace = private / ".env"
+        trace.write_bytes(b"synthetic private contents, never read by the producer")
+        paths = (diagnostics, private, trace)
+        before = [(p.lstat().st_mode, p.lstat().st_size, p.lstat().st_mtime_ns) for p in paths]
+        original_iterdir, original_open, original_lstat = Path.iterdir, Path.open, Path.lstat
+        checked = []
+
+        def guarded_iterdir(path):
+            self.assertFalse(path == diagnostics or diagnostics in path.parents)
+            return original_iterdir(path)
+
+        def guarded_open(path, *args, **kwargs):
+            self.assertFalse(path == diagnostics or diagnostics in path.parents)
+            return original_open(path, *args, **kwargs)
+
+        def guarded_lstat(path, *args, **kwargs):
+            self.assertNotIn(diagnostics, path.parents)
+            if path == diagnostics:
+                checked.append(path)
+            return original_lstat(path, *args, **kwargs)
+
+        with patch.object(Path, "iterdir", guarded_iterdir), \
+                patch.object(Path, "open", guarded_open), \
+                patch.object(Path, "lstat", guarded_lstat):
+            try:
+                package = self.package_fixture()
+            except SystemExit as error:
+                self.fail(f"Expected selected-payload packaging, got: {error}")
+        self.assertEqual(checked, [diagnostics, diagnostics])
+        self.assertEqual(before, [(p.lstat().st_mode, p.lstat().st_size, p.lstat().st_mtime_ns)
+                                  for p in paths])
+        self.assertEqual(trace.read_bytes(),
+                         b"synthetic private contents, never read by the producer")
+        with tarfile.open(package, "r:") as archive:
+            receipt = json.loads(archive.extractfile("receipt.json").read())
+            self.assertFalse(any(n == "output/diagnostics" or n.startswith("output/diagnostics/")
+                                 for n in archive.getnames()))
+        self.assert_selection(receipt, "omitted")
+        self.verify()
+        restored = self.root / "verified/output"
+        self.assertFalse((restored / "diagnostics").exists())
+        selected = [self.output, self.output / "config.json", self.output / "builds.json",
+                    self.output / "static", *(self.output / "static").rglob("*")]
+        for source in selected:
+            target = restored / source.relative_to(self.output)
+            self.assertEqual(target.is_dir(), source.is_dir())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode),
+                             stat.S_IMODE(source.stat().st_mode))
+            self.assertEqual(int(target.stat().st_mtime), int(source.stat().st_mtime))
+            if source.is_file():
+                self.assertEqual(target.read_bytes(), source.read_bytes())
+
+    def test_absent_diagnostics_is_recorded_without_observed_omission(self):
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            receipt = json.loads(archive.extractfile("receipt.json").read())
+        self.assert_selection(receipt, "absent")
+        self.verify()
+
+    def test_diagnostics_requires_real_directory_and_valid_mode_before_packaging(self):
+        diagnostics = self.output / "diagnostics"
+        diagnostics.write_bytes(b"fixture, not a directory")
+        original_lstat = Path.lstat
+        # Exercise lstat types without requiring Windows symlink/FIFO privileges.
+        for mode in (stat.S_IFREG | 0o600, stat.S_IFLNK | 0o777,
+                     stat.S_IFIFO | 0o600, stat.S_IFDIR | 0o1700):
+            checked = []
+
+            def metadata(path, *args, **kwargs):
+                if path == diagnostics:
+                    checked.append(path)
+                    return os.stat_result((mode, 0, 0, 2, 0, 0, 0, 0, 0, 0))
+                return original_lstat(path, *args, **kwargs)
+
+            with self.subTest(mode=mode), patch.object(Path, "lstat", metadata), \
+                    self.assertRaises(SystemExit):
+                self.execute("pack")
+            self.assertEqual(checked, [diagnostics])
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+
+    def test_nested_diagnostics_is_selected_and_round_trips(self):
+        nested = self.output / "static/diagnostics"
+        nested.mkdir()
+        (nested / "trace.json").write_bytes(b"selected fixture")
+        self.package_fixture()
+        self.verify()
+        self.assertEqual((self.root / "verified/output/static/diagnostics/trace.json").read_bytes(),
+                         b"selected fixture")
+
+    def test_other_unknown_entry_still_fails_with_diagnostics_present(self):
+        (self.output / "diagnostics").mkdir()
+        (self.output / "diagnostics-extra").write_bytes(b"not an approved exception")
+        with self.assertRaisesRegex(
+            SystemExit, "Unexpected output entry: output/diagnostics-extra"
+        ):
+            self.execute("pack")
+        self.assertFalse((self.root / "upload").exists())
+        self.assertFalse((self.root / "job-output").exists())
+
+    def test_consumer_rejects_diagnostics_members_despite_declared_omission(self):
+        (self.output / "diagnostics").mkdir()
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            self.assert_selection(json.loads(archive.extractfile("receipt.json").read()), "omitted")
+        original = package.read_bytes()
+        for name, kind in (("output/diagnostics", tarfile.DIRTYPE),
+                           ("output/diagnostics", tarfile.REGTYPE),
+                           ("output/diagnostics/cli_traces.json", tarfile.REGTYPE),
+                           ("output/diagnostics/nested/trace", tarfile.REGTYPE)):
+            package.write_bytes(original)
+            member = tarfile.TarInfo(name)
+            member.type = kind
+            self.rewrite_package(lambda entries: entries + [(member, b"")])
+            with self.subTest(name=name, kind=kind), self.assertRaises(SystemExit):
+                self.verify()
+            self.assertFalse((self.root / "verified").exists())
+
+    def test_consumer_rejects_adulterated_selection_and_receipt_schema(self):
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            receipt = json.loads(archive.extractfile("receipt.json").read())
+        self.assert_selection(receipt, "absent")
+        selection = receipt["selection"]
+        invalid_selections = [None, [], selection | {"extra": True},
+                              selection | {"source": "workspace"},
+                              selection | {"payload": "source"},
+                              selection | {"diagnostics": {}}, selection | {"diagnostics": []}]
+        for field, value in (("path", "output/static"), ("path", "output/diagnostics/*"),
+                             ("state", True), ("state", "ignored"), ("state", []),
+                             ("reason", "optional"), ("extra", True)):
+            invalid_selections.append(selection | {"diagnostics": selection["diagnostics"] |
+                                                   {field: value}})
+        cases = [receipt | {"selection": value} for value in invalid_selections]
+        cases += [receipt | {"version": value} for value in (1, 3, True, "2")]
+        cases += [receipt | {"omissions": []},
+                  {k: v for k, v in receipt.items() if k != "selection"}]
+        original = package.read_bytes()
+        for index, candidate in enumerate(cases):
+            package.write_bytes(original)
+            self.rewrite_package(lambda entries: [
+                (m, json.dumps(candidate).encode() if m.name == "receipt.json" else data)
+                for m, data in entries
+            ])
+            with self.subTest(case=index), self.assertRaises(SystemExit):
+                self.verify()
+            self.assertFalse((self.root / "verified").exists())
+
+    def test_selection_declaration_is_bound_to_expected_package_hash(self):
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            receipt = json.loads(archive.extractfile("receipt.json").read())
+        self.assert_selection(receipt, "absent")
+        expected_hash = self.digest
+        receipt["selection"]["diagnostics"]["state"] = "omitted"
+        self.rewrite_package(lambda entries: [
+            (m, json.dumps(receipt).encode() if m.name == "receipt.json" else data)
+            for m, data in entries
+        ])
+        with self.assertRaisesRegex(SystemExit, "Package SHA-256 mismatch"):
+            self.verify(overrides={"PACKAGE_SHA256": expected_hash})
+        self.assertFalse((self.root / "verified").exists())
+
     def test_download_by_id_layout_matches_verifier(self):
         package = self.package_fixture()
         self.assertEqual(self.download_inputs["artifact-ids"],
