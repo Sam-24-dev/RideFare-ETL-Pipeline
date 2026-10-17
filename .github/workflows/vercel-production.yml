@@ -243,12 +243,21 @@ jobs:
                   raise SystemExit("Output path cannot be represented in USTAR") from None
               return path
 
-          def inventory(root):
+          def inventory(root, *, omit_diagnostics=False):
               entries = []
               total = 0
+              diagnostics_state = "absent"
 
               def visit(path, name):
-                  nonlocal total
+                  nonlocal total, diagnostics_state
+                  # Producer selection only; received payloads must never ignore this path.
+                  if omit_diagnostics and name == "output/diagnostics":
+                      info = path.lstat()
+                      require(stat.S_ISDIR(info.st_mode), "Excluded diagnostics must be a real directory")
+                      require(stat.S_IMODE(info.st_mode) & ~0o777 == 0,
+                              "Special permission bits are unsupported")
+                      diagnostics_state = "omitted"
+                      return
                   output_path(name)
                   info = path.lstat()
                   mode = stat.S_IMODE(info.st_mode)
@@ -277,7 +286,7 @@ jobs:
               visit(root, "output")
               require(any(e["path"] == "output/config.json" and e["type"] == "file"
                           for e in entries), "Missing output/config.json")
-              return entries
+              return entries, diagnostics_state
 
           def json_object(pairs):
               result = {}
@@ -297,6 +306,11 @@ jobs:
               "build_run_attempt": number("GITHUB_RUN_ATTEMPT"), "workflow_id": 256058391,
               "cli_version": "50.39.0", "settings_sha256": SETTINGS_SHA256,
           }
+          selection = {
+              "source": ".vercel/output", "payload": "output",
+              "diagnostics": {"path": "output/diagnostics", "state": "absent",
+                              "reason": "auxiliary diagnostics excluded for privacy"},
+          }
           directory = Path(os.environ["BUNDLE_DIR"])
           package = directory / PACKAGE
           mode = os.environ.get("BUNDLE_MODE")
@@ -309,8 +323,10 @@ jobs:
                       "Public settings changed after build")
               root = workspace / ".vercel/output"
               require(not (workspace / ".vercel").is_symlink(), "Unsupported settings-directory symlink")
-              entries = inventory(root)
-              receipt = json.dumps({"version": 1, "provenance": provenance, "entries": entries},
+              entries, diagnostics_state = inventory(root, omit_diagnostics=True)
+              selection["diagnostics"]["state"] = diagnostics_state
+              receipt = json.dumps({"version": 2, "provenance": provenance,
+                                    "selection": selection, "entries": entries},
                                    sort_keys=True, separators=(",", ":")).encode()
               require(len(receipt) <= MAX_RECEIPT, "Receipt exceeds 2 MiB")
               directory.mkdir()
@@ -328,12 +344,13 @@ jobs:
                           with (root.parent / entry["path"]).open("rb") as stream:
                               archive.addfile(header, stream)
               require(package.stat().st_size <= MAX_PACKAGE, "Package exceeds 80 MiB")
-              require(inventory(root) == entries, "Output changed while packaging")
+              require(inventory(root, omit_diagnostics=True) == (entries, diagnostics_state),
+                      "Selected output changed while packaging")
               package_hash = file_digest(package)
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                   output.write(f"package_sha256={package_hash}\n")
-              print(json.dumps({"provenance": provenance, "entries": entries,
-                                "links": 0, "bytes": sum(e["size"] for e in entries),
+              print(json.dumps({"provenance": provenance, "selection": selection, "entries": entries,
+                                "payload_links": 0, "bytes": sum(e["size"] for e in entries),
                                 "package_bytes": package.stat().st_size, "package_sha256": package_hash}))
           else:
               artifact_id = number("ARTIFACT_ID")
@@ -415,10 +432,18 @@ jobs:
                   require(header is not None and header.isfile() and header.size <= MAX_RECEIPT,
                           "Missing or excessive receipt")
                   receipt = json.loads(archive.extractfile(header).read(), object_pairs_hook=json_object)
-                  require(isinstance(receipt, dict) and set(receipt) == {"version", "provenance", "entries"}
-                          and type(receipt["version"]) is int and receipt["version"] == 1
+                  require(isinstance(receipt, dict)
+                          and set(receipt) == {"version", "provenance", "selection", "entries"}
+                          and type(receipt["version"]) is int and receipt["version"] == 2
                           and json.dumps(receipt["provenance"], sort_keys=True)
                           == json.dumps(provenance, sort_keys=True), "Receipt provenance mismatch")
+                  require(isinstance(receipt["selection"], dict)
+                          and isinstance(receipt["selection"].get("diagnostics"), dict),
+                          "Invalid payload selection")
+                  diagnostics_state = receipt["selection"]["diagnostics"].get("state")
+                  require(diagnostics_state in ("absent", "omitted"), "Invalid diagnostics state")
+                  selection["diagnostics"]["state"] = diagnostics_state
+                  require(receipt["selection"] == selection, "Unsupported payload selection")
                   entries = receipt["entries"]
                   require(isinstance(entries, list) and 0 < len(entries) <= MAX_ENTRIES,
                           "Invalid receipt inventory")
@@ -470,8 +495,10 @@ jobs:
                       target = destination / entry["path"]
                       os.chmod(target, entry["mode"])
                       os.utime(target, (entry["mtime"], entry["mtime"]))
-              require(inventory(destination / "output") == entries, "Restored content or metadata mismatch")
-              print(json.dumps({"verified": provenance, "artifact_id": artifact_id,
+              require(inventory(destination / "output") == (entries, "absent"),
+                      "Restored content or metadata mismatch")
+              print(json.dumps({"verified_payload": provenance, "selection": selection,
+                                "artifact_id": artifact_id,
                                 "artifact_name": artifact_name, "github_zip_digest": zip_digest,
                                 "package_sha256": package_hash, "entries": len(entries), "bytes": total,
                                 "executed_bundle": False}))

@@ -184,31 +184,73 @@ The accepted 2F-A experiment must not be rerun to stand in for a future transfer
 
 The producer retains the exact CI gate, first eleven steps, pins, Python 3.13, Node 22,
 Vercel CLI 50.39.0, public settings hash, and runner-side regeneration. After its build,
-a standard-library Python script inventories **only** `.vercel/output`. It writes one
-uncompressed USTAR `production-bundle.tar`, containing `receipt.json` and `output/`.
+a standard-library Python script selects a payload from **only** `.vercel/output`.
+It writes one uncompressed USTAR `production-bundle.tar`, containing version 2 `receipt.json`
+and the selected `output/` tree, not a complete copy of the source output.
 It does not package the workspace, `.vercel/project.json`, global config, or auth caches.
 
-This first format accepts regular files and directories only. It explicitly rejects **all**
-symlinks and hard links, including internal links: none are silently followed, removed, or
-flattened. Unsupported topology is a failure requiring review, not an invitation to change
-the output until it passes. Top-level output entries are limited to `config.json`,
+The selected payload accepts regular files and directories only. It explicitly rejects **all**
+symlinks and hard links in that payload, including internal links: none are silently followed,
+removed, or flattened. Unsupported topology is a failure requiring review, not an invitation to change
+the output until it passes. Top-level selected entries are limited to `config.json`,
 `builds.json`, `static/`, and `functions/`; `output/config.json` is required. Other entries
 (including output caches), authentication/environment filenames, special permission bits,
 extended/sparse TAR headers, duplicates, external paths, and non-USTAR names are rejected.
 Names are canonical relative POSIX ASCII paths up to 240 characters and must also be
 representable in USTAR's name/prefix fields. This is not a generic Build Output API validator.
 
-The inventory records paths, types, modes, sizes, whole-second mtimes, and file SHA-256s,
+The selected inventory records paths, types, modes, sizes, whole-second mtimes, and file SHA-256s,
 without printing file contents. UID/GID and owner names are normalized to zero/empty;
 ACLs, xattrs and sub-second times are not transferred. Modes and whole-second mtimes are
 restored and checked along with every file's bytes. Unsupported metadata is not certified.
 
-Limits before upload are 64 MiB of file content, 4096 output entries including directories,
+Limits before upload are 64 MiB of selected file content, 4096 payload entries including directories,
 2 MiB for the JSON receipt, and 80 MiB for the complete TAR. These conservative limits keep
 one candidate well below the smallest documented 100 MB Hobby CLI upload ceiling and leave
 room for TAR headers/padding; they do **not** prove current free storage availability or
 Vercel acceptance. Upload uses the existing CI `upload-artifact` pin, a run/attempt-specific
 name, `if-no-files-found:error`, `overwrite:false`, and `retention-days:1`.
+
+### Deliberate diagnostics omission — receipt version 2
+
+The only producer exclusion is `.vercel/output/diagnostics`, represented as `output/diagnostics`.
+Before omitting it, the producer uses `lstat` and requires a real directory with no special
+permission bits. A file, symlink, or unsupported type fails before package creation or hash output.
+No descendants are traversed, read, hashed, printed, or copied; their links, types and contents
+are **not inspected or certified**. The source output is never deleted or modified.
+`output/static/diagnostics` is not this exception; other unknown top-level entries still fail.
+
+The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 2.
+Its fixed selection declaration is:
+
+```json
+{
+  "source": ".vercel/output",
+  "payload": "output",
+  "diagnostics": {
+    "path": "output/diagnostics",
+    "state": "omitted",
+    "reason": "auxiliary diagnostics excluded for privacy"
+  }
+}
+```
+
+`omitted` means that the directory entry passed the producer checks. If absent, state is `absent`,
+not a claimed observed omission. These are the only two states; extra fields, paths or reasons
+are rejected. The producer rechecks selection and the selected inventory after packaging.
+The consumer validates the declaration, bound by the independently supplied TAR hash; it cannot
+inspect the producer's original filesystem. It rejects every TAR member at `output/diagnostics`
+or below, regardless of the declaration, and never filters unexpected received members.
+The logs and round-trip comparisons describe only the selected payload (`payload_links`, not
+links in the omitted subtree).
+
+This is a deliberate privacy choice, **not native prebuilt equivalence**: the fixed CLI's
+[native prebuilt selection includes the output tree](https://github.com/vercel/vercel/blob/26539cfdb2971a9c40f1fb7cd22a152b92161164/packages/client/src/utils/index.ts#L235-L260).
+It loses the omitted diagnostics and does **not sanitize `builds.json` or the remaining bundle**.
+A new digest describes the selected package, not integrity of the omitted source subtree.
+Fixtures do not reconstruct the type or contents of the historical `output/diagnostics` rejected
+in run `38988199700`; those remain unknown. Quota, hosted transfer, portability and Vercel
+acceptance remain separate, unproven gates.
 
 ### Same-run consumer and integrity
 
@@ -225,7 +267,8 @@ attempt. It rejects incomplete/unexpected job listings. **The overall run may st
 progress**: the verifier belongs to it, so requiring a completed run would deadlock this flow.
 
 The receipt binds repository/SHA, CI run/attempt, build run/attempt, workflow ID, CLI version,
-settings SHA-256, and the complete inventory. Its provenance is compared to the consumer's
+settings SHA-256, the fixed selection declaration, and the complete selected inventory.
+Its provenance is compared to the consumer's
 context and GitHub metadata. Artifact metadata must independently match the ID, run, SHA,
 repository IDs, non-expired state and run/attempt-specific name. The verification log joins
 that receipt with the artifact ID and both digests; the embedded receipt cannot contain its
@@ -241,13 +284,15 @@ aborts if metadata digests differ or the actual TAR does not match `package_sha2
 The download directory must contain exactly that regular TAR. All TAR names, types, ownership,
 receipt fields, hierarchy, modes, sizes, mtimes and content hashes are validated **before**
 creating a new extraction directory. No `extractall` is used: only validated regular files
-and directories are materialized, followed by a complete content/metadata comparison.
+and directories are materialized, followed by a complete content/metadata comparison of the
+selected payload, without applying the producer's omission to the received tree.
 
 ### Required future evidence — not PASS from fixtures
 
 A separately authorized hosted transfer experiment must establish:
 
-1. The actual output tree, file count, byte size, modes and links fit the declared format.
+1. The actual selected payload's file count, byte size, modes and links fit the declared format,
+   and the excluded root entry satisfies its directory/metadata checks without inspecting its contents.
 2. The intended artifact contents are appropriate for download from this public repository.
    Filename restrictions and lack of credentials are **not** a secret/content audit.
 3. Shared Actions artifact storage has sufficient free quota; one-day retention is a bound,
