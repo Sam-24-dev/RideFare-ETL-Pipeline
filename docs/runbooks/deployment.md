@@ -185,7 +185,7 @@ The accepted 2F-A experiment must not be rerun to stand in for a future transfer
 The producer retains the exact CI gate, first eleven steps, pins, Python 3.13, Node 22,
 Vercel CLI 50.39.0, public settings hash, and runner-side regeneration. After its build,
 a standard-library Python script selects a payload from **only** `.vercel/output`.
-It writes one uncompressed USTAR `production-bundle.tar`, containing version 4 `receipt.json`
+It writes one uncompressed USTAR `production-bundle.tar`, containing version 5 `receipt.json`
 and the selected `output/` tree, not a complete copy of the source output.
 It does not package the workspace, `.vercel/project.json`, global config, or auth caches.
 
@@ -194,7 +194,8 @@ The selected payload accepts regular files, directories, and the narrowly define
 none are silently followed, removed, or flattened. Unsupported topology is a failure requiring
 review, not an invitation to change
 the output until it passes. Top-level selected entries are limited to `config.json`,
-`builds.json`, `static/`, and `functions/`; `output/config.json` is required. Other entries
+`builds.json`, `static/`, and `functions/`; regular `output/config.json` and `output/builds.json`
+are required. Other entries
 (including output caches), authentication/environment filenames, special permission bits,
 extended/sparse TAR headers, duplicates, external paths, and non-USTAR names are rejected.
 Names are canonical relative POSIX ASCII paths up to 240 characters and must also be
@@ -212,10 +213,56 @@ room for TAR headers/padding; they do **not** prove current free storage availab
 Vercel acceptance. Upload uses the existing CI `upload-artifact` pin, a run/attempt-specific
 name, `if-no-files-found:error`, `overwrite:false`, and `retention-days:1`.
 
-### Regular source files — independent bytes, receipt version 4
+### Minimal public metadata — receipt version 5, LOCAL ONLY
+
+The original regular `output/builds.json` is mandatory. Before projection, the producer uses
+bounded reads and the same positive-link-count, `lstat`/`fstat` identity and stability checks
+as other selected regular paths. It requires strict UTF-8 without BOM, complete JSON without
+trailing data, duplicate decoded keys at any depth, non-JSON constants or non-finite numbers.
+The root must be an object with `target` exactly `production`, `cliVersion` exactly `50.39.0`,
+and a nonempty `builds` list of objects. Any root or builder `error` key fails, including
+`null`, `false`, zero, empty strings, lists or objects. Every builder is checked: an early
+falsey error cannot hide a later one. Missing, unreadable or invalid originals never produce
+a successful replacement. These checks are deliberately stricter than the fixed CLI's
+[truthiness-based error and target checks](https://github.com/vercel/vercel/blob/26539cfdb2971a9c40f1fb7cd22a152b92161164/packages/cli/src/commands/deploy/index.ts#L1102-L1133).
+
+Discarded metadata is opaque JSON: `argv`, `//`, builder names/paths/API versions, `features`,
+`config` and unknown fields receive no unnecessary schemas or enums. They are not executed,
+used as paths, printed or copied. Nested `config.error` is not a root/builder error control.
+Failure messages are fixed and contain no original values, JSON fragments or stacks.
+
+Only after validation, the producer transports exactly the UTF-8 bytes
+`{"target":"production"}`, without BOM, extra spaces or final newline, as one independent
+REGTYPE at `output/builds.json`. Mode and whole-second mtime are retained; inventory size
+and SHA-256 describe the projected bytes. The source is not overwritten or replaced.
+Packaging reopens and revalidates it, and checks both metadata and a transient original hash,
+including changes that leave the projection identical. That original hash or any equivalent
+fingerprint is **never published** in the receipt, logs, job outputs or artifact. The source
+selection and projected payload both remain within the existing byte/entry limits.
+
+The exact additional producer omission is `output/static/_next/__private/trace`, not a pattern
+for `private`, `trace` or a whole directory. Its parents must be real selected directories.
+Before omission, `lstat` must show a regular file, positive links and supported permissions;
+metadata is rechecked after packaging. The producer never opens, reads or hashes its bytes.
+Symlinks, directories, special types, access errors or changing metadata fail. `omitted` means
+the file was observed and validated; `absent` means it was not present, not an invented omission.
+The source, its containers and `config.json` (including the 404 rule) remain unchanged. The
+404 rule does not protect bytes stored in a GitHub artifact. The consumer rejects this exact
+path and every descendant even when a manipulated TAR and receipt agree.
+
+This is a deliberate projection, **not a full source copy or native prebuilt equivalence**.
+The consumer checks the canonical transported bytes and trusted provenance, not the original
+errors it never received. A self-consistent receipt is not protection against a compromised
+producer. No global sanitization, public suitability, data license or Vercel acceptance is
+certified, and keeping possible `deploy --prebuilt` compatibility does not select a publisher.
+Run `39090585454` demonstrated transfer/reconstruction for **v4 only**, not this v5 candidate.
+This LOCAL ONLY unit does not authorize publication, enablement, dispatch or a new experiment.
+
+### Regular source files — independent bytes, receipt version 5
 
 Each selected regular source path is materialized as an independent USTAR `REGTYPE` member
-with its complete bytes, size, SHA-256, mode and whole-second mtime. A positive source `st_nlink`
+with its complete bytes, size, SHA-256, mode and whole-second mtime, except the explicit
+`builds.json` byte projection above. A positive source `st_nlink`
 may exceed one; the payload neither preserves nor certifies the source hard-link topology.
 The producer never searches for other inode names, groups inodes, deduplicates content, or
 opens an unselected counterpart. That counterpart need not be inside the payload. Byte limits
@@ -237,25 +284,27 @@ not an observed source topology. The producer's separate output field
 `source_regular_files_with_multiple_links` counts selected regular source paths observed with
 `st_nlink > 1`, including zero when none exist. `payload_links` still counts only `.func`
 symlink aliases. Individual `file` entry fields do not change. The consumer accepts only
-receipt v4 with the exact selection, rejects every TAR `LNKTYPE` even with an internal target,
+receipt v5 with the exact selection, rejects every TAR `LNKTYPE` even with an internal target,
 never calls `os.link`, and rejects restored regular files whose `st_nlink` is not exactly one.
 
 Regular type does **not** certify sanitized or publicly suitable content. Fixtures do not
 reconstruct the link count, contents or counterpart of the entry rejected in run `39068927418`.
-Real transfer, quota, public suitability, general portability and Vercel acceptance remain pending.
+Transfer of this v5 representation, quota, public suitability, general portability and Vercel
+acceptance remain pending; the accepted v4 transfer does not establish those claims.
 
-### Deliberate diagnostics omission — retained in receipt version 4
+### Deliberate diagnostics omission — retained in receipt version 5
 
-The only producer exclusion is `.vercel/output/diagnostics`, represented as `output/diagnostics`.
+The existing subtree exclusion remains `.vercel/output/diagnostics`, represented as
+`output/diagnostics`, separate from the exact static trace omission above.
 Before omitting it, the producer uses `lstat` and requires a real directory with no special
 permission bits. A file, symlink, or unsupported type fails before package creation or hash output.
 No descendants are traversed, read, hashed, printed, or copied; their links, types and contents
 are **not inspected or certified**. The source output is never deleted or modified.
 `output/static/diagnostics` is not this exception; other unknown top-level entries still fail.
 
-The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 4.
+The receipt has exactly `version`, `provenance`, `selection`, and `entries`; version must be 5.
 Earlier versions are rejected, not interpreted with speculative compatibility.
-Its fixed selection declaration is:
+Its closed selection declaration is shown here with both omitted entries observed:
 
 ```json
 {
@@ -266,13 +315,24 @@ Its fixed selection declaration is:
     "path": "output/diagnostics",
     "state": "omitted",
     "reason": "auxiliary diagnostics excluded for privacy"
+  },
+  "builds_json": {
+    "path": "output/builds.json",
+    "representation": "target-only"
+  },
+  "static_trace": {
+    "path": "output/static/_next/__private/trace",
+    "state": "omitted",
+    "reason": "auxiliary static trace excluded for privacy"
   }
 }
 ```
 
-`omitted` means that the directory entry passed the producer checks. If absent, state is `absent`,
+`omitted` means the corresponding entry passed its producer checks. If absent, state is `absent`,
 not a claimed observed omission. These are the only two states; extra fields, paths or reasons
-are rejected. The producer rechecks selection and the selected inventory after packaging.
+are rejected independently for diagnostics and static trace. The closed `builds_json` object
+has only `path` and `representation`: `source_sha256`, `validated` and other extensions fail.
+The producer rechecks selection and the selected inventory after packaging.
 The consumer validates the declaration, bound by the independently supplied TAR hash; it cannot
 inspect the producer's original filesystem. It rejects every TAR member at `output/diagnostics`
 or below, regardless of the declaration, and never filters unexpected received members.
@@ -281,13 +341,14 @@ links in the omitted subtree).
 
 This is a deliberate privacy choice, **not native prebuilt equivalence**: the fixed CLI's
 [native prebuilt selection includes the output tree](https://github.com/vercel/vercel/blob/26539cfdb2971a9c40f1fb7cd22a152b92161164/packages/client/src/utils/index.ts#L235-L260).
-It loses the omitted diagnostics and does **not sanitize `builds.json` or the remaining bundle**.
+It loses the omitted diagnostics and static trace; the manifest projection does **not sanitize
+the remaining bundle** or certify the opaque source metadata.
 A new digest describes the selected package, not integrity of the omitted source subtree.
 Fixtures do not reconstruct the type or contents of the historical `output/diagnostics` rejected
 in run `38988199700`; those remain unknown. Quota, hosted transfer, portability and Vercel
 acceptance remain separate, unproven gates.
 
-### Internal .func aliases — retained in receipt version 4
+### Internal .func aliases — retained in receipt version 5
 
 The fixed CLI can [write relative function aliases instead of duplicate functions](https://github.com/vercel/vercel/blob/26539cfdb2971a9c40f1fb7cd22a152b92161164/packages/cli/src/util/build/write-build-result.ts#L528-L554).
 This format accepts a symlink only below `output/functions`, with a name ending in `.func`,
@@ -305,7 +366,7 @@ link permissions and timestamps are not preserved or certified. USTAR stores a s
 header, not duplicated function content. File/directory entry schemas remain unchanged.
 The complete selected inventory, including link text, is rechecked after packaging.
 
-The consumer validates every member and the exact v4 inventory before creating its destination.
+The consumer validates every member and the exact v5 inventory before creating its destination.
 It materializes real files/directories first, then only validated aliases. It restores metadata
 on real entries only, never runs `chmod`/`utime` through a link, and compares alias text without
 traversal afterward. `payload_links` counts these selected aliases, not links in omitted diagnostics.
@@ -352,7 +413,8 @@ selected payload, without applying the producer's omission to the received tree.
 
 ### Required future evidence — not PASS from fixtures
 
-A separately authorized hosted transfer experiment must establish:
+The accepted v4 run is not evidence for this changed payload. Any separately authorized
+hosted validation of v5 would need to establish:
 
 1. The actual selected payload's file count, byte size, modes and links fit the declared format,
    including every real target and relative `.func` alias, and the excluded root entry satisfies

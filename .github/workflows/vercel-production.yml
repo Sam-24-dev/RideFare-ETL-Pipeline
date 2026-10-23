@@ -193,6 +193,7 @@ jobs:
           import hashlib
           import io
           import json
+          import math
           import os
           import posixpath
           import re
@@ -206,6 +207,9 @@ jobs:
           MAX_BYTES, MAX_PACKAGE, MAX_ENTRIES = 64 * 1024**2, 80 * 1024**2, 4096
           MAX_RECEIPT = 2 * 1024**2
           PACKAGE = "production-bundle.tar"
+          BUILDS_PATH = "output/builds.json"
+          BUILDS_JSON = b'{"target":"production"}'
+          TRACE_PATH = "output/static/_next/__private/trace"
           TAR_TYPES = {"file": tarfile.REGTYPE, "directory": tarfile.DIRTYPE,
                        "func-alias": tarfile.SYMTYPE}
 
@@ -227,8 +231,14 @@ jobs:
               return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
                       info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
+          def source_stat(path):
+              try:
+                  return path.lstat()
+              except OSError:
+                  raise SystemExit("Cannot inspect selected source metadata") from None
+
           def regular_bytes(path, expected):
-              require(regular_state(path.lstat()) == expected, "Selected regular file changed")
+              require(regular_state(source_stat(path)) == expected, "Selected regular file changed")
               flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
                        | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
               try:
@@ -237,12 +247,15 @@ jobs:
                   raise SystemExit("Cannot open selected regular file") from None
               with os.fdopen(fd, "rb") as stream:
                   require(regular_state(os.fstat(stream.fileno())) == expected
-                          and regular_state(path.lstat()) == expected,
+                          and regular_state(source_stat(path)) == expected,
                           "Selected regular file changed before reading")
-                  data = stream.read(expected[4] + 1)
+                  try:
+                      data = stream.read(expected[4] + 1)
+                  except OSError:
+                      raise SystemExit("Cannot read selected regular file") from None
                   require(len(data) == expected[4]
                           and regular_state(os.fstat(stream.fileno())) == expected
-                          and regular_state(path.lstat()) == expected,
+                          and regular_state(source_stat(path)) == expected,
                           "Selected regular file changed while reading")
               return data
 
@@ -260,6 +273,8 @@ jobs:
                       and path.as_posix() == name and not path.is_absolute()
                       and ".." not in path.parts and path.parts[0] == "output",
                       "External or unsupported output path")
+              require(name != TRACE_PATH and not name.startswith(TRACE_PATH + "/"),
+                      "Excluded static trace is not transferable")
               parts = path.parts[1:]
               require(not parts or parts[0] in {"config.json", "builds.json", "static", "functions"},
                       f"Unexpected output entry: {name}")
@@ -304,21 +319,30 @@ jobs:
           def inventory(root, *, omit_diagnostics=False):
               entries = []
               file_states = {}  # Per-path stability checks only; never serialized or grouped by inode.
-              total = 0
+              total = source_total = 0
               diagnostics_state = "absent"
+              builds_hash = trace_state = None
 
               def visit(path, name):
-                  nonlocal total, diagnostics_state
+                  nonlocal total, source_total, diagnostics_state, builds_hash, trace_state
                   # Producer selection only; received payloads must never ignore this path.
                   if omit_diagnostics and name == "output/diagnostics":
-                      info = path.lstat()
+                      info = source_stat(path)
                       require(stat.S_ISDIR(info.st_mode), "Excluded diagnostics must be a real directory")
                       require(stat.S_IMODE(info.st_mode) & ~0o777 == 0,
                               "Special permission bits are unsupported")
                       diagnostics_state = "omitted"
                       return
+                  if omit_diagnostics and name == TRACE_PATH:
+                      info = source_stat(path)
+                      require(stat.S_IMODE(info.st_mode) & ~0o777 == 0,
+                              "Special permission bits are unsupported")
+                      trace_state = regular_state(info)
+                      return
                   output_path(name)
-                  info = path.lstat()
+                  info = source_stat(path)
+                  if name == BUILDS_PATH:
+                      require(stat.S_ISREG(info.st_mode), "Build metadata must be a regular file")
                   mode = stat.S_IMODE(info.st_mode)
                   require(mode & ~0o777 == 0, "Special permission bits are unsupported")
                   alias = stat.S_ISLNK(info.st_mode)
@@ -338,13 +362,20 @@ jobs:
                   except ValueError:
                       raise SystemExit("Output directory cannot be represented in USTAR") from None
                   size = 0 if directory or alias else info.st_size
-                  total += size
-                  require(total <= MAX_BYTES and len(entries) < MAX_ENTRIES,
+                  source_total += size
+                  require(source_total <= MAX_BYTES and len(entries) < MAX_ENTRIES,
                           "Output exceeds the 64 MiB / 4096 entry transfer limit")
                   content_hash = None
                   if kind == "file":
                       file_states[name] = regular_state(info)
-                      content_hash = hashlib.sha256(regular_bytes(path, file_states[name])).hexdigest()
+                      data = regular_bytes(path, file_states[name])
+                      if omit_diagnostics and name == BUILDS_PATH:
+                          builds_hash = hashlib.sha256(data).hexdigest()  # Transient; never serialized.
+                          data = project_builds(data)
+                          size = len(data)
+                      content_hash = hashlib.sha256(data).hexdigest()
+                  total += size
+                  require(total <= MAX_BYTES, "Output exceeds 64 MiB")
                   entry = {"path": name, "type": kind, "mode": 0o777 if alias else mode,
                            "size": size, "mtime": 0 if alias else int(info.st_mtime),
                            "sha256": content_hash}
@@ -359,14 +390,42 @@ jobs:
               validate_aliases(entries)
               require(any(e["path"] == "output/config.json" and e["type"] == "file"
                           for e in entries), "Missing output/config.json")
-              return entries, diagnostics_state, file_states
+              require(any(e["path"] == BUILDS_PATH and e["type"] == "file" for e in entries),
+                      "Missing regular output/builds.json")
+              return entries, diagnostics_state, file_states, builds_hash, trace_state
 
           def json_object(pairs):
               result = {}
               for key, value in pairs:
-                  require(key not in result, "Duplicate receipt key")
+                  require(key not in result, "Duplicate JSON key")
                   result[key] = value
               return result
+
+          def finite_float(value):
+              number = float(value)
+              if not math.isfinite(number):
+                  raise ValueError
+              return number
+
+          def invalid_constant(value):
+              raise ValueError
+
+          def strict_json(data):
+              try:
+                  return json.loads(data.decode("utf-8"), object_pairs_hook=json_object,
+                                    parse_float=finite_float, parse_constant=invalid_constant)
+              except (UnicodeError, ValueError, RecursionError):
+                  raise SystemExit("Invalid metadata JSON") from None
+
+          def project_builds(data):
+              original = strict_json(data)
+              require(isinstance(original, dict) and "error" not in original
+                      and original.get("target") == "production"
+                      and original.get("cliVersion") == "50.39.0"
+                      and isinstance(original.get("builds"), list) and original["builds"]
+                      and all(isinstance(build, dict) and "error" not in build
+                              for build in original["builds"]), "Invalid original build controls")
+              return BUILDS_JSON
 
           require(os.environ.get("GITHUB_REPOSITORY") == REPOSITORY, "Wrong repository")
           require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
@@ -384,6 +443,9 @@ jobs:
               "regular_files": "independent-bytes",
               "diagnostics": {"path": "output/diagnostics", "state": "absent",
                               "reason": "auxiliary diagnostics excluded for privacy"},
+              "builds_json": {"path": BUILDS_PATH, "representation": "target-only"},
+              "static_trace": {"path": TRACE_PATH, "state": "absent",
+                               "reason": "auxiliary static trace excluded for privacy"},
           }
           directory = Path(os.environ["BUNDLE_DIR"])
           package = directory / PACKAGE
@@ -397,9 +459,11 @@ jobs:
                       "Public settings changed after build")
               root = workspace / ".vercel/output"
               require(not (workspace / ".vercel").is_symlink(), "Unsupported settings-directory symlink")
-              entries, diagnostics_state, file_states = inventory(root, omit_diagnostics=True)
+              snapshot = inventory(root, omit_diagnostics=True)
+              entries, diagnostics_state, file_states, builds_hash, trace_state = snapshot
               selection["diagnostics"]["state"] = diagnostics_state
-              receipt = json.dumps({"version": 4, "provenance": provenance,
+              selection["static_trace"]["state"] = "absent" if trace_state is None else "omitted"
+              receipt = json.dumps({"version": 5, "provenance": provenance,
                                     "selection": selection, "entries": entries},
                                    sort_keys=True, separators=(",", ":")).encode()
               require(len(receipt) <= MAX_RECEIPT, "Receipt exceeds 2 MiB")
@@ -417,12 +481,15 @@ jobs:
                           archive.addfile(header)
                       else:
                           data = regular_bytes(root.parent / entry["path"], file_states[entry["path"]])
+                          if entry["path"] == BUILDS_PATH:
+                              require(hashlib.sha256(data).hexdigest() == builds_hash,
+                                      "Original build metadata changed")
+                              data = project_builds(data)
                           require(hashlib.sha256(data).hexdigest() == entry["sha256"],
                                   "Selected regular file content changed")
                           archive.addfile(header, io.BytesIO(data))
               require(package.stat().st_size <= MAX_PACKAGE, "Package exceeds 80 MiB")
-              require(inventory(root, omit_diagnostics=True)
-                      == (entries, diagnostics_state, file_states),
+              require(inventory(root, omit_diagnostics=True) == snapshot,
                       "Selected output changed while packaging")
               package_hash = file_digest(package)
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -514,18 +581,22 @@ jobs:
                   header = members.get("receipt.json")
                   require(header is not None and header.isfile() and header.size <= MAX_RECEIPT,
                           "Missing or excessive receipt")
-                  receipt = json.loads(archive.extractfile(header).read(), object_pairs_hook=json_object)
+                  receipt = strict_json(archive.extractfile(header).read())
                   require(isinstance(receipt, dict)
                           and set(receipt) == {"version", "provenance", "selection", "entries"}
-                          and type(receipt["version"]) is int and receipt["version"] == 4
+                          and type(receipt["version"]) is int and receipt["version"] == 5
                           and json.dumps(receipt["provenance"], sort_keys=True)
                           == json.dumps(provenance, sort_keys=True), "Receipt provenance mismatch")
                   require(isinstance(receipt["selection"], dict)
-                          and isinstance(receipt["selection"].get("diagnostics"), dict),
+                          and isinstance(receipt["selection"].get("diagnostics"), dict)
+                          and isinstance(receipt["selection"].get("static_trace"), dict),
                           "Invalid payload selection")
                   diagnostics_state = receipt["selection"]["diagnostics"].get("state")
                   require(diagnostics_state in ("absent", "omitted"), "Invalid diagnostics state")
                   selection["diagnostics"]["state"] = diagnostics_state
+                  trace_state = receipt["selection"]["static_trace"].get("state")
+                  require(trace_state in ("absent", "omitted"), "Invalid static trace state")
+                  selection["static_trace"]["state"] = trace_state
                   require(receipt["selection"] == selection, "Unsupported payload selection")
                   entries = receipt["entries"]
                   require(isinstance(entries, list) and 0 < len(entries) <= MAX_ENTRIES,
@@ -563,7 +634,12 @@ jobs:
                           alias_target(name, entry["target"])
                   require(set(members) == expected_names and "output" in expected_names
                           and members["output"].isdir() and "output/config.json" in expected_names
-                          and members["output/config.json"].isfile(), "Unexpected or missing archive entries")
+                          and members["output/config.json"].isfile()
+                          and BUILDS_PATH in expected_names and members[BUILDS_PATH].isfile(),
+                          "Unexpected or missing archive entries")
+                  require(members[BUILDS_PATH].size == len(BUILDS_JSON)
+                          and archive.extractfile(members[BUILDS_PATH]).read() == BUILDS_JSON,
+                          "Non-canonical build metadata")
                   for entry in entries:
                       for parent in PurePosixPath(entry["path"]).parents:
                           if parent.as_posix() != ".":

@@ -498,7 +498,8 @@ class TestProductionBundleTransfer(unittest.TestCase):
         self.output = self.workspace / ".vercel/output"
         (self.output / "static/.well-known").mkdir(parents=True)
         (self.output / "config.json").write_text('{"version":3}\n', encoding="utf-8")
-        (self.output / "builds.json").write_text('{"target":"production"}\n', encoding="utf-8")
+        (self.output / "builds.json").write_text(
+            '{"target":"production","cliVersion":"50.39.0","builds":[{}]}\n', encoding="utf-8")
         (self.output / "static/index.html").write_bytes(b"fixture, never executed\n")
         (self.output / "static/.well-known/data.txt").write_bytes(b"hidden fixture\n")
         (self.workspace / ".vercel/project.json").write_bytes(PROJECT_JSON.encode())
@@ -607,6 +608,313 @@ class TestProductionBundleTransfer(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(data) if member.isfile() else None)
         self.digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def test_projects_builds_json_without_changing_source(self):
+        source = self.output / "builds.json"
+        original, before = source.read_bytes(), source.lstat()
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            self.assertEqual(archive.extractfile("output/builds.json").read(),
+                             b'{"target":"production"}')
+        self.assertEqual(source.read_bytes(), original)
+        for key in ("st_ino", "st_nlink", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"):
+            self.assertEqual(getattr(source.lstat(), key), getattr(before, key))
+        self.verify()
+        self.assertEqual((self.root / "verified/output/builds.json").read_bytes(),
+                         b'{"target":"production"}')
+
+    def test_omits_only_static_trace_and_preserves_routing(self):
+        trace = self.output / "static/_next/__private/trace"
+        trace.parent.mkdir(parents=True)
+        trace.write_bytes(b"synthetic diagnostic fixture")
+        neighbor = trace.with_name("trace-extra")
+        neighbor.write_bytes(b"selected neighbor")
+        config = self.output / "config.json"
+        routing = b'{"version":3,"routes":[{"src":"/_next/__private/trace",' \
+                  b'"dest":"/404","status":404,"continue":true}]}\n'
+        config.write_bytes(routing)
+        package = self.package_fixture()
+        with tarfile.open(package, "r:") as archive:
+            self.assertNotIn("output/static/_next/__private/trace", archive.getnames())
+            self.assertEqual(archive.extractfile("output/config.json").read(), routing)
+            self.assertEqual(archive.extractfile("output/static/_next/__private/trace-extra").read(),
+                             b"selected neighbor")
+        self.assertTrue(trace.is_file())
+        self.assertEqual(config.read_bytes(), routing)
+        self.verify()
+        self.assertEqual((self.root / "verified/output/config.json").read_bytes(), routing)
+        self.assertFalse((self.root / "verified/output/static/_next/__private/trace").exists())
+
+    def rewrite_payload_file(self, name, data, kind=tarfile.REGTYPE):
+        def transform(entries):
+            receipt = json.loads(next(d for m, d in entries if m.name == "receipt.json"))
+            result = [(m, d) for m, d in entries if m.name not in (name, "receipt.json")]
+            receipt["entries"] = [e for e in receipt["entries"] if e["path"] != name]
+            if data is not None:
+                member = tarfile.TarInfo(name)
+                member.type, member.mode = kind, 0o644
+                receipt["entries"].append({
+                    "path": name, "type": "directory" if kind == tarfile.DIRTYPE else "file",
+                    "mode": member.mode, "mtime": 0, "size": len(data),
+                    "sha256": None if kind == tarfile.DIRTYPE else hashlib.sha256(data).hexdigest(),
+                })
+                result.append((member, data))
+            receipt["entries"].sort(key=lambda e: e["path"])
+            header = next(m for m, _ in entries if m.name == "receipt.json")
+            return [(header, json.dumps(receipt).encode()), *result]
+        self.rewrite_package(transform)
+
+    def test_opaque_build_metadata_is_discarded_without_public_fingerprint(self):
+        source = self.output / "builds.json"
+        marker = "SYNTHETIC_DISCARDED_METADATA"
+        original = json.dumps({
+            "target": "production", "cliVersion": "50.39.0",
+            "builds": [{"apiVersion": [], "use": 7, "config": {"error": marker},
+                        "requirePath": {"opaque": marker}}, {}],
+            "argv": {"opaque": marker}, "features": [marker], "//": None,
+            "future_metadata": {"error": marker},
+        }).encode()
+        source.write_bytes(original)
+        before = source.lstat()
+        package = self.package_fixture()
+        public = json.dumps(self.report) + (self.root / "job-output").read_text(encoding="utf-8")
+        for discarded in (marker, hashlib.sha256(original).hexdigest()):
+            self.assertNotIn(discarded, public)
+            self.assertNotIn(discarded.encode(), package.read_bytes())
+        self.assertEqual(source.read_bytes(), original)
+        for field in ("st_ino", "st_nlink", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"):
+            self.assertEqual(getattr(source.lstat(), field), getattr(before, field))
+        with tarfile.open(package, "r:") as archive:
+            self.assert_selection(json.load(archive.extractfile("receipt.json")), "absent")
+            member = archive.getmember("output/builds.json")
+            self.assertEqual(member.mode, stat.S_IMODE(before.st_mode))
+            self.assertEqual(member.mtime, int(before.st_mtime))
+            self.assertEqual(archive.extractfile(member).read(), b'{"target":"production"}')
+        self.verify()
+
+    def test_invalid_original_build_metadata_fails_closed(self):
+        valid = {"target": "production", "cliVersion": "50.39.0", "builds": [{}]}
+        cases = [b"", b"{", b"[]", b"null", b"false", b"1", b'"text"',
+                 b"\xef\xbb\xbf" + json.dumps(valid).encode(), b"\xff",
+                 json.dumps(valid).encode() + b" {}",
+                 b'{"target":"preview","target":"production"}',
+                 b'{"target":"production","targ\\u0065t":"production"}',
+                 b'{"target":"production","cliVersion":"50.39.0","builds":[{}],'
+                 b'"opaque":{"same":1,"same":2}}']
+        for field, values in (("target", (None, True, 0, [], {}, "preview", "production ")),
+                              ("cliVersion", (None, True, 50.39, [], {}, "50.39.1")),
+                              ("builds", (None, False, {}, [], [None], [False], [1], ["builder"]))):
+            cases.append(json.dumps({k: v for k, v in valid.items() if k != field}).encode())
+            cases.extend(json.dumps(valid | {field: value}).encode() for value in values)
+        for token in (b"NaN", b"Infinity", b"-Infinity", b"1e999"):
+            cases.append(json.dumps(valid).encode()[:-1] + b',"opaque":' + token + b"}")
+        for index, data in enumerate(cases):
+            (self.output / "builds.json").write_bytes(data)
+            with self.subTest(case=index), self.assertRaises(SystemExit) as error:
+                self.execute("pack")
+            self.assertIn(str(error.exception), ("Invalid metadata JSON", "Duplicate JSON key",
+                                                 "Invalid original build controls"))
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+
+    def test_every_original_error_key_is_rejected_even_when_falsey(self):
+        valid = {"target": "production", "cliVersion": "50.39.0", "builds": [{}]}
+        for value in (None, False, 0, "", [], {}, "SYNTHETIC_ERROR"):
+            candidates = [valid | {"error": value}, valid | {"builds": [{"error": value}]},
+                          valid | {"builds": [{}, {"error": value}]},
+                          valid | {"builds": [{"error": value}, {"error": "later error"}]}]
+            for index, candidate in enumerate(candidates):
+                (self.output / "builds.json").write_bytes(json.dumps(candidate).encode())
+                with self.subTest(value=value, position=index), self.assertRaisesRegex(
+                    SystemExit, "^Invalid original build controls$"
+                ):
+                    self.execute("pack")
+                self.assertFalse((self.root / "upload").exists())
+                self.assertFalse((self.root / "job-output").exists())
+
+    def test_original_build_metadata_is_required_readable_and_regular(self):
+        source = self.output / "builds.json"
+        original = source.read_bytes()
+        source.unlink()
+        with self.assertRaises(SystemExit):
+            self.execute("pack")
+        source.mkdir()
+        with self.assertRaisesRegex(SystemExit, "Build metadata must be a regular file"):
+            self.execute("pack")
+        source.rmdir()
+        source.write_bytes(original)
+        real_open, real_lstat = os.open, Path.lstat
+        for operation in ("open", "lstat"):
+            def denied(path, *args, **kwargs):
+                if Path(path) == source:
+                    raise PermissionError("SYNTHETIC_UNDISCLOSED_DETAIL")
+                return (real_open if operation == "open" else real_lstat)(path, *args, **kwargs)
+            with self.subTest(operation=operation), patch.object(
+                os if operation == "open" else Path,
+                "open" if operation == "open" else "lstat", denied
+            ), self.assertRaises(SystemExit) as error:
+                self.execute("pack")
+            self.assertNotIn("SYNTHETIC_UNDISCLOSED_DETAIL", str(error.exception))
+        self.assertFalse((self.root / "upload").exists())
+        self.assertFalse((self.root / "job-output").exists())
+
+    def test_original_change_with_identical_projection_aborts_before_hash(self):
+        source = self.output / "builds.json"
+        original = b'{"target":"production","cliVersion":"50.39.0","builds":[{}],"opaque":1}'
+        real_addfile, real_lstat, real_fstat = tarfile.TarFile.addfile, Path.lstat, os.fstat
+        for phase in ("receipt.json", "output/static/index.html"):
+            source.write_bytes(original)
+            before = source.lstat()
+            changed = False
+
+            def lstat(path, *args, **kwargs):
+                return before if path == source else real_lstat(path, *args, **kwargs)
+
+            def fstat(fd):
+                info = real_fstat(fd)
+                same_file = (info.st_dev, info.st_ino) == (before.st_dev, before.st_ino)
+                return before if same_file else info
+
+            def mutate(archive, member, stream=None):
+                nonlocal changed
+                result = real_addfile(archive, member, stream)
+                if member.name == phase:
+                    source.write_bytes(original.replace(b'"opaque":1', b'"opaque":2'))
+                    changed = True
+                return result
+
+            output = self.root / ("job-" + phase.replace("/", "-"))
+            with self.subTest(phase=phase), patch.object(Path, "lstat", lstat), \
+                    patch("os.fstat", side_effect=fstat), \
+                    patch.object(tarfile.TarFile, "addfile", mutate), self.assertRaises(SystemExit):
+                self.execute("pack", {"BUNDLE_DIR": str(output) + "-bundle",
+                                      "GITHUB_OUTPUT": str(output)})
+            self.assertTrue(changed)
+            self.assertFalse(output.exists())
+
+    def test_static_trace_is_metadata_only_and_absence_is_not_omission(self):
+        trace = self.output / "static/_next/__private/trace"
+        trace.parent.mkdir(parents=True)
+        trace.write_bytes(b"not opened by producer")
+        before = trace.lstat()
+        real_open, real_os_open = Path.open, os.open
+
+        def guard(operation):
+            def checked(path, *args, **kwargs):
+                self.assertNotEqual(Path(path), trace, "Excluded trace bytes must not be read")
+                return operation(path, *args, **kwargs)
+            return checked
+
+        with patch.object(Path, "open", guard(real_open)), \
+                patch("os.open", side_effect=guard(real_os_open)):
+            self.package_fixture()
+            self.assertEqual(self.report["selection"]["static_trace"]["state"], "omitted")
+            self.verify()
+        after = trace.lstat()
+        for field in ("st_ino", "st_nlink", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"):
+            self.assertEqual(getattr(after, field), getattr(before, field))
+        trace.unlink()
+        self.execute("pack", {"BUNDLE_DIR": str(self.root / "absent-trace")})
+        self.assertEqual(self.report["selection"]["static_trace"]["state"], "absent")
+
+    def test_static_trace_invalid_metadata_or_access_never_becomes_absent(self):
+        trace = self.output / "static/_next/__private/trace"
+        trace.parent.mkdir(parents=True)
+        trace.write_bytes(b"unread fixture")
+        real_lstat = Path.lstat
+        changes = [{"st_mode": mode} for mode in (stat.S_IFDIR | 0o755,
+                   stat.S_IFLNK | 0o777, stat.S_IFIFO | 0o600, stat.S_IFREG | 0o4644)]
+        changes += [{"st_nlink": value} for value in (0, -1, True, 1.5)]
+        for index, fields in enumerate([*changes, None]):
+            def metadata(path, *args, **kwargs):
+                if path == trace:
+                    if fields is None:
+                        raise PermissionError("private fixture detail")
+                    return self.changed_stat(real_lstat(path), **fields)
+                return real_lstat(path, *args, **kwargs)
+            with self.subTest(case=index), patch.object(Path, "lstat", metadata), \
+                    self.assertRaises(SystemExit):
+                self.execute("pack")
+            self.assertFalse((self.root / "upload").exists())
+            self.assertFalse((self.root / "job-output").exists())
+
+    def test_static_trace_metadata_change_during_packaging_aborts(self):
+        trace = self.output / "static/_next/__private/trace"
+        trace.parent.mkdir(parents=True)
+        trace.write_bytes(b"unread fixture")
+        real_lstat = Path.lstat
+        calls = 0
+
+        def metadata(path, *args, **kwargs):
+            nonlocal calls
+            info = real_lstat(path, *args, **kwargs)
+            if path == trace:
+                calls += 1
+                if calls == 2:
+                    return self.changed_stat(info, st_nlink=info.st_nlink + 1)
+            return info
+
+        with patch.object(Path, "lstat", metadata), self.assertRaises(SystemExit):
+            self.execute("pack")
+        self.assertEqual(calls, 2)
+        self.assertFalse((self.root / "job-output").exists())
+
+    def test_consumer_requires_canonical_build_metadata_despite_coherent_hashes(self):
+        package = self.package_fixture()
+        original = package.read_bytes()
+        for value in (None, b"{}", b'{"target":"preview"}', b'{"target":"Production"}',
+                      b'{"target":"production"}\n',
+                      b'{"target":"production","argv":[]}',
+                      b'{"target":"production","target":"production"}'):
+            package.write_bytes(original)
+            self.rewrite_payload_file("output/builds.json", value)
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                self.verify()
+            self.assertFalse((self.root / "verified").exists())
+
+    def test_consumer_rejects_trace_and_descendants_with_coherent_inventory(self):
+        trace = "output/static/_next/__private/trace"
+        (self.output / "static/_next/__private").mkdir(parents=True)
+        package = self.package_fixture()
+        original = package.read_bytes()
+        for state in ("absent", "omitted"):
+            for descendant in (False, True):
+                package.write_bytes(original)
+                self.rewrite_payload_file(trace, b"" if descendant else b"fixture",
+                                          tarfile.DIRTYPE if descendant else tarfile.REGTYPE)
+                if descendant:
+                    self.rewrite_payload_file(trace + "/child", b"fixture")
+                def declaration(entries):
+                    for member, data in entries:
+                        if member.name == "receipt.json":
+                            receipt = json.loads(data)
+                            receipt["selection"]["static_trace"]["state"] = state
+                            data = json.dumps(receipt).encode()
+                        yield member, data
+                self.rewrite_package(lambda entries: list(declaration(entries)))
+                with self.subTest(state=state, descendant=descendant), self.assertRaisesRegex(
+                    SystemExit, "Excluded static trace"
+                ):
+                    self.verify()
+                self.assertFalse((self.root / "verified").exists())
+
+    def test_original_size_limit_is_checked_before_projection_or_read(self):
+        source = self.output / "builds.json"
+        real_lstat, real_open = Path.lstat, os.open
+
+        def metadata(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            return self.changed_stat(info, st_size=64 * 1024**2 + 1) if path == source else info
+
+        def guarded_open(path, *args, **kwargs):
+            self.assertNotEqual(Path(path), source)
+            return real_open(path, *args, **kwargs)
+
+        with patch.object(Path, "lstat", metadata), patch("os.open", side_effect=guarded_open), \
+                self.assertRaisesRegex(SystemExit, "64 MiB"):
+            self.execute("pack")
+        self.assertFalse((self.root / "upload").exists())
+        self.assertFalse((self.root / "job-output").exists())
+
     def test_source_hardlinks_round_trip_as_independent_regular_files(self):
         source = self.output / "static/index.html"
         second = self.output / "static/second.html"
@@ -624,7 +932,7 @@ class TestProductionBundleTransfer(unittest.TestCase):
         self.assertEqual(self.report["payload_links"], 0)
         with tarfile.open(package, "r:") as archive:
             receipt = json.load(archive.extractfile("receipt.json"))
-            self.assertEqual(receipt["version"], 4)
+            self.assertEqual(receipt["version"], 5)
             self.assertEqual(receipt["selection"]["regular_files"], "independent-bytes")
             self.assertFalse(any(m.islnk() for m in archive))
             for path in ("output/static/index.html", "output/static/second.html"):
@@ -888,7 +1196,7 @@ class TestProductionBundleTransfer(unittest.TestCase):
             stream = archive.extractfile("receipt.json")
             assert stream is not None
             receipt = json.load(stream)
-            self.assertEqual(receipt["version"], 4)
+            self.assertEqual(receipt["version"], 5)
             member = archive.getmember("output/functions/nested/alias.func")
             self.assertTrue(member.issym())
             self.assertEqual(member.linkname, "../canonical.func")
@@ -1093,13 +1401,16 @@ class TestProductionBundleTransfer(unittest.TestCase):
             self.verify()
 
     def assert_selection(self, receipt, state):
-        self.assertEqual(receipt["version"], 4)
+        self.assertEqual(receipt["version"], 5)
         self.assertEqual(set(receipt), {"version", "provenance", "selection", "entries"})
         self.assertEqual(receipt["selection"], {
             "source": ".vercel/output", "payload": "output",
             "regular_files": "independent-bytes",
             "diagnostics": {"path": "output/diagnostics", "state": state,
                             "reason": "auxiliary diagnostics excluded for privacy"},
+            "builds_json": {"path": "output/builds.json", "representation": "target-only"},
+            "static_trace": {"path": "output/static/_next/__private/trace", "state": "absent",
+                             "reason": "auxiliary static trace excluded for privacy"},
         })
 
     def test_omits_diagnostics_without_accessing_contents_or_changing_source(self):
@@ -1156,7 +1467,9 @@ class TestProductionBundleTransfer(unittest.TestCase):
                              stat.S_IMODE(source.stat().st_mode))
             self.assertEqual(int(target.stat().st_mtime), int(source.stat().st_mtime))
             if source.is_file():
-                self.assertEqual(target.read_bytes(), source.read_bytes())
+                expected = (b'{"target":"production"}' if source == self.output / "builds.json"
+                            else source.read_bytes())
+                self.assertEqual(target.read_bytes(), expected)
 
     def test_absent_diagnostics_is_recorded_without_observed_omission(self):
         package = self.package_fixture()
@@ -1240,8 +1553,20 @@ class TestProductionBundleTransfer(unittest.TestCase):
                              ("reason", "optional"), ("extra", True)):
             invalid_selections.append(selection | {"diagnostics": selection["diagnostics"] |
                                                    {field: value}})
+        for key in ("builds_json", "static_trace"):
+            invalid_selections.extend(selection | {key: value} for value in (None, [], {}))
+            for field, value in (("path", "output/other"), ("source_sha256", "0" * 64),
+                                 ("validated", True), ("extra", {})):
+                invalid_selections.append(selection | {key: selection[key] | {field: value}})
+        invalid_selections.append(selection | {"builds_json": selection["builds_json"] |
+                                               {"representation": "original"}})
+        for field, value in (("state", True), ("state", "ignored"), ("state", []),
+                             ("reason", "optional")):
+            invalid_selections.append(selection | {"static_trace": selection["static_trace"] |
+                                                   {field: value}})
         cases = [receipt | {"selection": value} for value in invalid_selections]
-        cases += [receipt | {"version": value} for value in (1, 2, 3, 5, True, "4")]
+        cases += [receipt | {"source_sha256": "0" * 64}, receipt | {"validated": True}]
+        cases += [receipt | {"version": value} for value in (1, 2, 3, 4, 6, True, "5")]
         cases += [receipt | {"selection": selection | {"regular_files": value}}
                   for value in (None, True, [], "hard-links", "independent-bytes ")]
         cases += [receipt | {"selection": {k: v for k, v in selection.items()
@@ -1296,7 +1621,9 @@ class TestProductionBundleTransfer(unittest.TestCase):
                              stat.S_IMODE(source.stat().st_mode))
             self.assertEqual(int(target.stat().st_mtime), int(source.stat().st_mtime))
             if source.is_file():
-                self.assertEqual(target.read_bytes(), source.read_bytes())
+                expected = (b'{"target":"production"}' if source == self.output / "builds.json"
+                            else source.read_bytes())
+                self.assertEqual(target.read_bytes(), expected)
         self.assertFalse((self.root / "verified/project.json").exists())
 
     def test_rejects_context_and_package_hash_before_extraction(self):
