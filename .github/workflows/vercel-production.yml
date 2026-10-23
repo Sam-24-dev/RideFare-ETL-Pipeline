@@ -146,8 +146,67 @@ jobs:
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
 
+      - name: Prepare isolated Vercel CLI
+        shell: bash
+        run: |
+          test ! -e "$RUNNER_TEMP/ridefare-vercel-cli"
+          mkdir "$RUNNER_TEMP/ridefare-vercel-cli"
+          cp "$GITHUB_WORKSPACE/scripts/vercel-cli/package.json" "$GITHUB_WORKSPACE/scripts/vercel-cli/package-lock.json" "$RUNNER_TEMP/ridefare-vercel-cli/"
+
       - name: Install Vercel CLI
-        run: npm install --global vercel@50.39.0
+        shell: bash
+        working-directory: ${{ runner.temp }}/ridefare-vercel-cli
+        run: npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
+
+      - name: Verify isolated Vercel CLI
+        shell: bash
+        working-directory: ${{ runner.temp }}/ridefare-vercel-cli
+        run: |
+          node --input-type=commonjs - <<'JS'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { createRequire } = require('node:module');
+          const root = fs.realpathSync(path.join(process.env.RUNNER_TEMP, 'ridefare-vercel-cli'));
+          function metadata(directory, name, version) {
+            const value = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
+            if (value.name !== name || value.version !== version
+                || fs.realpathSync(directory) !== directory) {
+              throw new Error('Unexpected isolated tooling package');
+            }
+            return value;
+          }
+          const cli = path.join(root, 'node_modules/vercel');
+          const cliMetadata = metadata(cli, 'vercel', '50.39.0');
+          const bin = path.join(cli, 'dist/vc.js');
+          if (cliMetadata.bin.vercel !== 'dist/vc.js' || fs.realpathSync(bin) !== bin) {
+            throw new Error('Unexpected isolated CLI bin');
+          }
+          const fromCli = createRequire(path.join(cli, 'package.json'));
+          const fun = path.join(root, 'node_modules/@vercel/fun');
+          const funManifest = path.join(fun, 'package.json');
+          if (fs.realpathSync(fromCli.resolve('@vercel/fun/package.json')) !== funManifest) {
+            throw new Error('Unexpected fun resolution');
+          }
+          if (metadata(fun, '@vercel/fun', '1.3.6').dependencies.tar !== '7.5.22') {
+            throw new Error('Unexpected fun tar dependency');
+          }
+          const tar = path.join(root, 'node_modules/tar');
+          metadata(tar, 'tar', '7.5.22');
+          const tarEntry = path.join(tar, 'dist/commonjs/index.min.js');
+          for (const helper of ['install-node.js', 'install-python.js']) {
+            const helperPath = path.join(fun, 'dist/src', helper);
+            if (!fs.lstatSync(helperPath, { throwIfNoEntry: false })?.isFile()
+                || fs.realpathSync(helperPath) !== helperPath) {
+              throw new Error('Unexpected fun helper file');
+            }
+            const fromFun = createRequire(helperPath);
+            if (fs.realpathSync(fromFun.resolve('tar')) !== tarEntry
+                || typeof fromFun('tar').extract !== 'function') {
+              throw new Error('Unexpected tar resolution from fun helper');
+            }
+          }
+          console.log('Isolated Vercel CLI 50.39.0; @vercel/fun 1.3.6; tar 7.5.22');
+          JS
 
       - name: Prepare public Vercel settings
         shell: bash
@@ -178,7 +237,7 @@ jobs:
         shell: bash
         run: |
           printf '%s\n' '9bb39ac69d8dc234cd93183b48c49995f678d50b135d4409bfa7603b999938e6  .vercel/project.json' | sha256sum --check --status
-          vercel build --prod --global-config "$RUNNER_TEMP/ridefare-vercel-build"
+          node "$RUNNER_TEMP/ridefare-vercel-cli/node_modules/vercel/dist/vc.js" build --prod --global-config "$RUNNER_TEMP/ridefare-vercel-build"
 
       - name: Package production output
         id: bundle
