@@ -299,7 +299,7 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
         }
         documents = {}
         for name, (size, digest) in expected.items():
-            data = (root / name).read_bytes()
+            data = (root / name).read_bytes().replace(b"\r\n", b"\n")
             self.assertEqual(len(data), size)
             self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
             documents[name] = json.loads(data)
@@ -320,6 +320,56 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
         self.assertFalse(any(
             package.get("resolved", "").startswith("file:") for package in packages.values()
         ))
+
+    def test_tooling_identity_accepts_lf_and_crlf_checkouts(self):
+        root = Path(__file__).resolve().parents[2] / "scripts/vercel-cli"
+        canonical = {
+            root / name: (root / name).read_bytes().replace(b"\r\n", b"\n")
+            for name in ("package.json", "package-lock.json")
+        }
+        for manifest_crlf, lock_crlf in (
+            (False, False), (True, False), (False, True), (True, True)
+        ):
+            simulated = {}
+            for name, crlf, size in (
+                ("package.json", manifest_crlf, 226 if manifest_crlf else 213),
+                ("package-lock.json", lock_crlf, 153328 if lock_crlf else 149198),
+            ):
+                path = root / name
+                simulated[path] = (
+                    canonical[path].replace(b"\n", b"\r\n") if crlf else canonical[path]
+                )
+                self.assertEqual(len(simulated[path]), size)
+            with self.subTest(manifest_crlf=manifest_crlf, lock_crlf=lock_crlf):
+                with patch.object(Path, "read_bytes", autospec=True,
+                                  side_effect=lambda path: simulated[path]):
+                    self.test_tooling_manifest_and_lock_are_frozen()
+
+    def test_tooling_identity_rejects_other_byte_changes(self):
+        root = Path(__file__).resolve().parents[2] / "scripts/vercel-cli"
+        canonical = {
+            root / name: (root / name).read_bytes().replace(b"\r\n", b"\n")
+            for name in ("package.json", "package-lock.json")
+        }
+        for path, data in canonical.items():
+            mutations = {
+                "BOM": b"\xef\xbb\xbf" + data,
+                "isolated CR": b"\r" + data,
+                "extra byte": data + b"x",
+                "extra space": data + b" ",
+                "extra newline": data + b"\n",
+                "same-size whitespace": data.replace(b"  ", b"\t ", 1),
+                "same-size content": data.replace(b"0.0.0", b"0.0.1", 1),
+            }
+            for name, changed in mutations.items():
+                for crlf in (False, True):
+                    simulated = dict(canonical)
+                    simulated[path] = changed.replace(b"\n", b"\r\n") if crlf else changed
+                    with self.subTest(file=path.name, mutation=name, crlf=crlf):
+                        with patch.object(Path, "read_bytes", autospec=True,
+                                          side_effect=lambda path: simulated[path]):
+                            with self.assertRaises(AssertionError):
+                                self.test_tooling_manifest_and_lock_are_frozen()
 
     def test_tooling_installation_is_isolated(self):
         step = next(step for step in self.workflow["jobs"]["production-build"]["steps"]

@@ -171,6 +171,10 @@ they are not regenerated. `npm ci --ignore-scripts --no-audit --no-fund` uses th
 public registry and an explicit temporary working directory, without project `--prefix`,
 global installation, `npx`, executable fallback, or installation inside the checkout.
 The application's `corepack pnpm install --frozen-lockfile` remains unchanged and runs once.
+For frozen identity of these two tooling JSON sources only, policy tests normalize CRLF
+into LF in memory before checking the approved canonical sizes and SHA-256s, retaining
+all semantic checks. This accommodates checkout line endings without rewriting either file.
+No other normalization or v5 payload, receipt, TAR, inventory or digest byte contract changes.
 
 The root override changes CLI `50.39.0`'s declared `@vercel/fun@1.3.0` resolution to
 `@vercel/fun@1.3.6`, which declares `tar@7.5.22`. This is a **modified dependency closure**,
