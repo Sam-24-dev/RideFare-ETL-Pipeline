@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -63,8 +64,67 @@ ARTIFACT_ID_RUN = (
 BUILD_RUN = (
     f"printf '%s\\n' '{hashlib.sha256(PROJECT_JSON.encode()).hexdigest()}"
     "  .vercel/project.json' | sha256sum --check --status\n"
-    'vercel build --prod --global-config "$RUNNER_TEMP/ridefare-vercel-build"\n'
+    'node "$RUNNER_TEMP/ridefare-vercel-cli/node_modules/vercel/dist/vc.js" '
+    'build --prod --global-config "$RUNNER_TEMP/ridefare-vercel-build"\n'
 )
+TOOLING_DIRECTORY = "${{ runner.temp }}/ridefare-vercel-cli"
+TOOLING_PREPARE_RUN = (
+    'test ! -e "$RUNNER_TEMP/ridefare-vercel-cli"\n'
+    'mkdir "$RUNNER_TEMP/ridefare-vercel-cli"\n'
+    'cp "$GITHUB_WORKSPACE/scripts/vercel-cli/package.json" '
+    '"$GITHUB_WORKSPACE/scripts/vercel-cli/package-lock.json" '
+    '"$RUNNER_TEMP/ridefare-vercel-cli/"\n'
+)
+TOOLING_INSTALL_STEP = {
+    "name": "Install Vercel CLI", "shell": "bash", "working-directory": TOOLING_DIRECTORY,
+    "run": "npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/",
+}
+TOOLING_CHECK_RUN = """node --input-type=commonjs - <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const root = fs.realpathSync(path.join(process.env.RUNNER_TEMP, 'ridefare-vercel-cli'));
+function metadata(directory, name, version) {
+  const value = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
+  if (value.name !== name || value.version !== version
+      || fs.realpathSync(directory) !== directory) {
+    throw new Error('Unexpected isolated tooling package');
+  }
+  return value;
+}
+const cli = path.join(root, 'node_modules/vercel');
+const cliMetadata = metadata(cli, 'vercel', '50.39.0');
+const bin = path.join(cli, 'dist/vc.js');
+if (cliMetadata.bin.vercel !== 'dist/vc.js' || fs.realpathSync(bin) !== bin) {
+  throw new Error('Unexpected isolated CLI bin');
+}
+const fromCli = createRequire(path.join(cli, 'package.json'));
+const fun = path.join(root, 'node_modules/@vercel/fun');
+const funManifest = path.join(fun, 'package.json');
+if (fs.realpathSync(fromCli.resolve('@vercel/fun/package.json')) !== funManifest) {
+  throw new Error('Unexpected fun resolution');
+}
+if (metadata(fun, '@vercel/fun', '1.3.6').dependencies.tar !== '7.5.22') {
+  throw new Error('Unexpected fun tar dependency');
+}
+const tar = path.join(root, 'node_modules/tar');
+metadata(tar, 'tar', '7.5.22');
+const tarEntry = path.join(tar, 'dist/commonjs/index.min.js');
+for (const helper of ['install-node.js', 'install-python.js']) {
+  const helperPath = path.join(fun, 'dist/src', helper);
+  if (!fs.lstatSync(helperPath, { throwIfNoEntry: false })?.isFile()
+      || fs.realpathSync(helperPath) !== helperPath) {
+    throw new Error('Unexpected fun helper file');
+  }
+  const fromFun = createRequire(helperPath);
+  if (fs.realpathSync(fromFun.resolve('tar')) !== tarEntry
+      || typeof fromFun('tar').extract !== 'function') {
+    throw new Error('Unexpected tar resolution from fun helper');
+  }
+}
+console.log('Isolated Vercel CLI 50.39.0; @vercel/fun 1.3.6; tar 7.5.22');
+JS
+"""
 
 
 class ProductionLoader(yaml.SafeLoader):
@@ -133,7 +193,7 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
         self.assertEqual(job["runs-on"], "ubuntu-latest")
         self.assertEqual(job["env"], {"RIDEFARE_PROJECT_ROOT": "${{ github.workspace }}"})
         steps = job["steps"]
-        self.assertEqual(len(steps), 13)
+        self.assertEqual(len(steps), 15)
         gate = steps[0]
         self.assertEqual(set(gate), {"name", "id", "shell", "env", "run"})
         self.assertEqual(gate["name"], "Validate exact CI attempt")
@@ -159,18 +219,21 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
             {"name": "Enable Corepack", "run": "corepack enable"},
             {"name": "Install workspace dependencies", "run":
              "corepack pnpm install --frozen-lockfile"},
-            {"name": "Install Vercel CLI", "run": "npm install --global vercel@50.39.0"},
+            {"name": "Prepare isolated Vercel CLI", "shell": "bash", "run": TOOLING_PREPARE_RUN},
+            TOOLING_INSTALL_STEP,
+            {"name": "Verify isolated Vercel CLI", "shell": "bash",
+             "working-directory": TOOLING_DIRECTORY, "run": TOOLING_CHECK_RUN},
             {"name": "Prepare public Vercel settings", "shell": "bash", "run": SETTINGS_RUN},
             {"name": "Build production bundle", "shell": "bash", "run": BUILD_RUN},
         ]
-        self.assertEqual(steps[1:11], expected)
+        self.assertEqual(steps[1:13], expected)
         self.assertIs(steps[1]["with"]["persist-credentials"], False)
         self.assertEqual(job["outputs"], {
             "artifact_id": "${{ steps.bundle-upload.outputs.artifact-id }}",
             "zip_digest": "${{ steps.bundle-upload.outputs.artifact-digest }}",
             "package_sha256": "${{ steps.bundle.outputs.package_sha256 }}",
         })
-        package = steps[11]
+        package = steps[13]
         self.assertEqual(set(package), {"name", "id", "shell", "env", "run"})
         self.assertEqual(package["name"], "Package production output")
         self.assertEqual(package["id"], "bundle")
@@ -181,7 +244,7 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
             "CI_RUN_ID": "${{ inputs.ci_run_id }}",
             "CI_RUN_ATTEMPT": "${{ inputs.ci_run_attempt }}",
         })
-        self.assertEqual(steps[12], {
+        self.assertEqual(steps[14], {
             "name": "Upload production bundle", "id": "bundle-upload",
             "uses": EXPECTED_ACTIONS[3],
             "with": {
@@ -190,7 +253,7 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
                 "if-no-files-found": "error", "retention-days": 1, "overwrite": False,
             },
         })
-        self.assertIs(steps[12]["with"]["overwrite"], False)
+        self.assertIs(steps[14]["with"]["overwrite"], False)
         consumer = workflow["jobs"]["verify-production-bundle"]
         self.assertEqual(set(consumer), {"runs-on", "needs", "steps"})
         self.assertEqual(consumer["runs-on"], "ubuntu-latest")
@@ -223,6 +286,245 @@ class TestProductionWorkflowPolicy(unittest.TestCase):
             yaml.safe_dump(workflow),
             r"(?i)secrets\.|VERCEL_TOKEN|vercel\s+(pull|link|login|deploy|promote)|--(yes|token|id)\b",
         )
+
+    def test_tooling_manifest_and_lock_are_frozen(self):
+        root = Path(__file__).resolve().parents[2] / "scripts/vercel-cli"
+        expected = {
+            "package.json": (
+                213, "30d8dfadbac1f455b3e3d28929ae0b18ea4efacd16bc13d564655e18b56e523b"
+            ),
+            "package-lock.json": (
+                149198, "84e18b74050fe736779437bc6a90a4a605c6bef2acad09e9017568c39fc909db"
+            ),
+        }
+        documents = {}
+        for name, (size, digest) in expected.items():
+            data = (root / name).read_bytes().replace(b"\r\n", b"\n")
+            self.assertEqual(len(data), size)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
+            documents[name] = json.loads(data)
+        self.assertEqual(documents["package.json"], {
+            "name": "ridefare-vercel-fun-probe", "version": "0.0.0", "private": True,
+            "dependencies": {"vercel": "50.39.0"},
+            "overrides": {"vercel@50.39.0": {"@vercel/fun": "1.3.6"}},
+        })
+        lock = documents["package-lock.json"]
+        self.assertEqual(lock["lockfileVersion"], 3)
+        packages = lock["packages"]
+        self.assertEqual(packages[""]["dependencies"], {"vercel": "50.39.0"})
+        for name, version in (("vercel", "50.39.0"), ("@vercel/fun", "1.3.6"), ("tar", "7.5.22")):
+            self.assertEqual(packages[f"node_modules/{name}"]["version"], version)
+        self.assertEqual(packages["node_modules/vercel"]["dependencies"]["@vercel/fun"], "1.3.0")
+        self.assertEqual(packages["node_modules/@vercel/fun"]["dependencies"]["tar"], "7.5.22")
+        self.assertFalse(any(package.get("link") for package in packages.values()))
+        self.assertFalse(any(
+            package.get("resolved", "").startswith("file:") for package in packages.values()
+        ))
+
+    def test_tooling_identity_accepts_lf_and_crlf_checkouts(self):
+        root = Path(__file__).resolve().parents[2] / "scripts/vercel-cli"
+        canonical = {
+            root / name: (root / name).read_bytes().replace(b"\r\n", b"\n")
+            for name in ("package.json", "package-lock.json")
+        }
+        for manifest_crlf, lock_crlf in (
+            (False, False), (True, False), (False, True), (True, True)
+        ):
+            simulated = {}
+            for name, crlf, size in (
+                ("package.json", manifest_crlf, 226 if manifest_crlf else 213),
+                ("package-lock.json", lock_crlf, 153328 if lock_crlf else 149198),
+            ):
+                path = root / name
+                simulated[path] = (
+                    canonical[path].replace(b"\n", b"\r\n") if crlf else canonical[path]
+                )
+                self.assertEqual(len(simulated[path]), size)
+            with self.subTest(manifest_crlf=manifest_crlf, lock_crlf=lock_crlf):
+                with patch.object(Path, "read_bytes", autospec=True,
+                                  side_effect=lambda path: simulated[path]):
+                    self.test_tooling_manifest_and_lock_are_frozen()
+
+    def test_tooling_identity_rejects_other_byte_changes(self):
+        root = Path(__file__).resolve().parents[2] / "scripts/vercel-cli"
+        canonical = {
+            root / name: (root / name).read_bytes().replace(b"\r\n", b"\n")
+            for name in ("package.json", "package-lock.json")
+        }
+        for path, data in canonical.items():
+            mutations = {
+                "BOM": b"\xef\xbb\xbf" + data,
+                "isolated CR": b"\r" + data,
+                "extra byte": data + b"x",
+                "extra space": data + b" ",
+                "extra newline": data + b"\n",
+                "same-size whitespace": data.replace(b"  ", b"\t ", 1),
+                "same-size content": data.replace(b"0.0.0", b"0.0.1", 1),
+            }
+            for name, changed in mutations.items():
+                for crlf in (False, True):
+                    simulated = dict(canonical)
+                    simulated[path] = changed.replace(b"\n", b"\r\n") if crlf else changed
+                    with self.subTest(file=path.name, mutation=name, crlf=crlf):
+                        with patch.object(Path, "read_bytes", autospec=True,
+                                          side_effect=lambda path: simulated[path]):
+                            with self.assertRaises(AssertionError):
+                                self.test_tooling_manifest_and_lock_are_frozen()
+
+    def test_tooling_installation_is_isolated(self):
+        step = next(step for step in self.workflow["jobs"]["production-build"]["steps"]
+                    if step["name"] == "Install Vercel CLI")
+        self.assertEqual(step, TOOLING_INSTALL_STEP)
+
+    def test_tooling_build_uses_explicit_cli_bin(self):
+        step = next(step for step in self.workflow["jobs"]["production-build"]["steps"]
+                    if step["name"] == "Build production bundle")
+        self.assertEqual(step, {
+            "name": "Build production bundle", "shell": "bash",
+            "run": BUILD_RUN,
+        })
+
+    def test_tooling_copy_uses_validated_checkout(self):
+        steps = self.workflow["jobs"]["production-build"]["steps"]
+        self.assertEqual(steps[8], {
+            "name": "Prepare isolated Vercel CLI", "shell": "bash", "run": TOOLING_PREPARE_RUN,
+        })
+        self.assertEqual(steps[10], {
+            "name": "Verify isolated Vercel CLI", "shell": "bash",
+            "working-directory": TOOLING_DIRECTORY, "run": TOOLING_CHECK_RUN,
+        })
+        self.assertEqual(steps[7], {
+            "name": "Install workspace dependencies",
+            "run": "corepack pnpm install --frozen-lockfile",
+        })
+
+    def test_rejects_tooling_installation_and_executable_bypasses(self):
+        mutations = [
+            (8, "run", TOOLING_PREPARE_RUN.replace("$GITHUB_WORKSPACE", "$RUNNER_TEMP")),
+            (8, "run", TOOLING_PREPARE_RUN.replace("package-lock.json", "other-lock.json")),
+            (9, "run", "npm install --global vercel@50.39.0"),
+            (9, "run", TOOLING_INSTALL_STEP["run"].replace("--ignore-scripts", "")),
+            (9, "run", TOOLING_INSTALL_STEP["run"] + " --prefix ."),
+            (9, "working-directory", "apps/web"),
+            (10, "working-directory", "${{ github.workspace }}"),
+            (10, "run", TOOLING_CHECK_RUN.replace("fromFun.resolve", "fromCli.resolve")),
+            (12, "run", BUILD_RUN.replace(
+                'node "$RUNNER_TEMP/ridefare-vercel-cli/node_modules/vercel/dist/vc.js"', "vercel"
+            )),
+            (12, "run", BUILD_RUN.replace("node ", "npx ")),
+            (12, "run", BUILD_RUN.replace("vercel/dist/vc.js", "vercel/other.js")),
+            (12, "run", BUILD_RUN + "vercel build --prod\n"),
+        ]
+        for index, key, value in mutations:
+            bad = deepcopy(self.workflow)
+            bad["jobs"]["production-build"]["steps"][index][key] = value
+            with self.subTest(step=index, key=key), self.assertRaises(AssertionError):
+                self.assert_policy(bad)
+
+    def run_tooling_check(self, mutation=None):
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node is required for the inline tooling-check fixtures")
+        step = self.workflow["jobs"]["production-build"]["steps"][10]
+        script = step["run"].split("\n", 1)[1].removesuffix("JS\n")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "ridefare-vercel-cli"
+            modules = root / "node_modules"
+            packages = {
+                "vercel": {"name": "vercel", "version": "50.39.0", "bin": {"vercel": "dist/vc.js"}},
+                "@vercel/fun": {"name": "@vercel/fun", "version": "1.3.6",
+                                "dependencies": {"tar": "7.5.22"}},
+                "tar": {"name": "tar", "version": "7.5.22", "main": "dist/commonjs/index.min.js"},
+            }
+            for name, data in packages.items():
+                directory = modules / name
+                directory.mkdir(parents=True)
+                (directory / "package.json").write_text(json.dumps(data), encoding="utf-8")
+            files = {
+                "vercel/dist/vc.js": "throw new Error('CLI must not execute');\n",
+                "@vercel/fun/dist/src/install-node.js": "throw new Error('Do not execute');\n",
+                "@vercel/fun/dist/src/install-python.js": "throw new Error('Do not execute');\n",
+                "tar/dist/commonjs/index.min.js": "exports.extract = function () {};\n",
+            }
+            for name, content in files.items():
+                file = modules / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(content, encoding="utf-8")
+            if mutation:
+                mutation(modules)
+            environment = {
+                key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH")
+                if key in os.environ
+            }
+            environment["RUNNER_TEMP"] = temp
+            return subprocess.run(
+                [node, "--input-type=commonjs", "-"], input=script, cwd=root,
+                env=environment, capture_output=True, encoding="utf-8", timeout=10, check=False,
+            )
+
+    def test_inline_tooling_check_accepts_expected_resolution(self):
+        result = self.run_tooling_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.strip(),
+                         "Isolated Vercel CLI 50.39.0; @vercel/fun 1.3.6; tar 7.5.22")
+
+    def test_inline_tooling_check_rejects_absent_or_directory_helpers(self):
+        for helper in ("install-node.js", "install-python.js"):
+            for directory in (False, True):
+                def mutate(modules, helper=helper, directory=directory):
+                    file = modules / "@vercel/fun/dist/src" / helper
+                    file.unlink()
+                    if directory:
+                        file.mkdir()
+
+                with self.subTest(helper=helper, directory=directory):
+                    result = self.run_tooling_check(mutate)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Unexpected fun helper file", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
+    def test_inline_tooling_check_rejects_wrong_versions_dependencies_and_bin(self):
+        for name, field, value, error in (
+            ("vercel", "version", "50.39.1", "Unexpected isolated tooling package"),
+            ("@vercel/fun", "version", "1.3.0", "Unexpected isolated tooling package"),
+            ("tar", "version", "7.5.7", "Unexpected isolated tooling package"),
+            ("@vercel/fun", "dependencies", {"tar": "7.5.7"}, "Unexpected fun tar dependency"),
+            ("vercel", "bin", {"vercel": "other.js"}, "Unexpected isolated CLI bin"),
+        ):
+            def mutate(modules, name=name, field=field, value=value):
+                file = modules / name / "package.json"
+                data = json.loads(file.read_text(encoding="utf-8"))
+                data[field] = value
+                file.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.subTest(package=name, field=field):
+                result = self.run_tooling_check(mutate)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_inline_tooling_check_rejects_shadow_copies_and_invalid_exports(self):
+        def shadow_fun(modules):
+            shutil.copytree(modules / "@vercel/fun", modules / "vercel/node_modules/@vercel/fun")
+
+        def shadow_tar(modules):
+            shutil.copytree(modules / "tar", modules / "@vercel/fun/dist/src/node_modules/tar")
+
+        def invalid_tar(modules):
+            (modules / "tar/dist/commonjs/index.min.js").write_text(
+                "exports.extract = null;\n", encoding="utf-8"
+            )
+
+        for mutation, error in (
+            (shadow_fun, "Unexpected fun resolution"),
+            (shadow_tar, "Unexpected tar resolution from fun helper"),
+            (invalid_tar, "Unexpected tar resolution from fun helper"),
+        ):
+            with self.subTest(mutation=mutation.__name__):
+                result = self.run_tooling_check(mutation)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+                self.assertEqual(result.stdout, "")
 
     def test_workflow_matches_build_only_policy(self):
         self.assert_policy(self.workflow)

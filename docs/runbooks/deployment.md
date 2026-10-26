@@ -161,11 +161,52 @@ authentication-cache reuse, deployment, promotion, or later publisher. B1 adds o
 bounded output upload/verification described below; independent CI keeps its existing
 separate demonstration-export uploads.
 
+### Isolated CLI tooling — LOCAL ONLY candidate
+
+The producer copies only the versioned `scripts/vercel-cli/package.json` and
+`package-lock.json` from the validated checkout into a new
+`$RUNNER_TEMP/ridefare-vercel-cli` directory. The manifest and lock are byte-for-byte
+copies of the accepted second Windows probe, including its private probe package name;
+they are not regenerated. `npm ci --ignore-scripts --no-audit --no-fund` uses the official
+public registry and an explicit temporary working directory, without project `--prefix`,
+global installation, `npx`, executable fallback, or installation inside the checkout.
+The application's `corepack pnpm install --frozen-lockfile` remains unchanged and runs once.
+For frozen identity of these two tooling JSON sources only, policy tests normalize CRLF
+into LF in memory before checking the approved canonical sizes and SHA-256s, retaining
+all semantic checks. This accommodates checkout line endings without rewriting either file.
+No other normalization or v5 payload, receipt, TAR, inventory or digest byte contract changes.
+
+The root override changes CLI `50.39.0`'s declared `@vercel/fun@1.3.0` resolution to
+`@vercel/fun@1.3.6`, which declares `tar@7.5.22`. This is a **modified dependency closure**,
+not the intact upstream CLI `50.39.0` closure. Before building, an inline Node check requires
+the installed package versions, expected real paths and CLI bin metadata, resolves fun from
+the CLI, and resolves and loads tar from both fun runtime-helper contexts. Wrong versions,
+shadow copies or an invalid tar export fail closed. This is a targeted check, not a generic
+npm audit or proof about all embedded/minified code or every CLI execution path.
+
+The build invokes `node "$RUNNER_TEMP/ridefare-vercel-cli/node_modules/vercel/dist/vc.js"`
+with the existing `build --prod --global-config` flags. The invocation's checkout-root cwd,
+public settings hash and `rootDirectory: apps/web` routing remain unchanged; only the
+installation has an explicit temporary cwd. The settings file is checked immediately
+before the build. No global Vercel executable is selected through PATH.
+
+Accepted evidence is the second isolated Windows probe on Node `22.23.4` / npm `10.9.9`:
+clean installation without a self-link, effective CLI/fun/tar resolution, isolated CLI
+`--version`, and nine fixtures calling the installed fun helpers. Those fixtures are not
+repeated by this candidate. Local policy tests exercise the real inline version/resolution
+check against synthetic package fixtures, not a new dependency installation or CLI build.
+Installation and application build on Ubuntu with this tooling remain **unverified** and
+require separate hosted authorization. The accepted v5 transfer run `39882088571` used the
+previous tooling; it is not evidence for this tooling change and must not be repeated here.
+This candidate adds no publisher or credentials, certifies neither security nor full CLI
+compatibility, and does not close the privileged tooling gate, B1 or R0-PR2.
+
 ### Validation and remaining unknowns
 
 Run only the static policy locally with `python -I -B tests/unit/test_production_workflow_policy.py`.
 It parses the real YAML and exercises its CI gate with in-memory GitHub responses and mocked
-GET/output interfaces; it never runs application commands, installs tools, or invokes Vercel.
+GET/output interfaces; it also executes the inline Node tooling check with synthetic local
+packages. It never runs application commands, installs tools, or invokes Vercel.
 
 A passing local policy alone is **not a demonstrated credentialless hosted build**.
 The separate 2F-A experiment verified gate execution with read-only GitHub permissions,
@@ -182,8 +223,9 @@ The accepted 2F-A experiment must not be rerun to stand in for a future transfer
 
 ### Exact scope and package
 
-The producer retains the exact CI gate, first eleven steps, pins, Python 3.13, Node 22,
-Vercel CLI 50.39.0, public settings hash, and runner-side regeneration. After its build,
+The producer retains the exact CI gate, pins, Python 3.13, Node 22, application dependency
+installation, Vercel CLI 50.39.0, public settings hash, and runner-side regeneration.
+Only CLI installation/resolution changes as described in the isolated-tooling candidate above. After its build,
 a standard-library Python script selects a payload from **only** `.vercel/output`.
 It writes one uncompressed USTAR `production-bundle.tar`, containing version 5 `receipt.json`
 and the selected `output/` tree, not a complete copy of the source output.

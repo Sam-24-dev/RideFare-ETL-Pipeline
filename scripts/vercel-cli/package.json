@@ -1,0 +1,13 @@
+{
+  "name": "ridefare-vercel-fun-probe",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "vercel": "50.39.0"
+  },
+  "overrides": {
+    "vercel@50.39.0": {
+      "@vercel/fun": "1.3.6"
+    }
+  }
+}
